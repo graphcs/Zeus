@@ -42,8 +42,10 @@ class Critic:
             content=candidate.content,
         )
 
+        # Call LLM for structured extraction
         response, usage = await self.llm.generate_json(
             prompt=prompt,
+            response_model=Critique,
             system=prompts.SYSTEM,
             temperature=0.5,  # Moderate temperature for balanced critique
         )

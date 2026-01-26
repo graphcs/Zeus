@@ -42,6 +42,7 @@ class Planner:
 
         response, usage = await self.llm.generate_json(
             prompt=prompt,
+            response_model=Plan,
             system=prompts.SYSTEM,
             temperature=0.5,
         )

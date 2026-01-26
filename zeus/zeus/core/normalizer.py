@@ -40,6 +40,7 @@ class Normalizer:
         # Call LLM for structured extraction
         response, usage = await self.llm.generate_json(
             prompt=prompt,
+            response_model=NormalizedProblem,
             system=prompts.SYSTEM,
             temperature=0.3,  # Lower temperature for extraction
         )

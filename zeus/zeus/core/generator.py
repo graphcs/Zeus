@@ -47,6 +47,7 @@ class Generator:
 
         response, usage = await self.llm.generate_json(
             prompt=prompt,
+            response_model=Candidate,
             system=prompts.SYSTEM,
             temperature=0.7,
             max_tokens=8192,  # Larger output for comprehensive content
@@ -93,6 +94,7 @@ class Generator:
 
         response, usage = await self.llm.generate_json(
             prompt=prompt,
+            response_model=Candidate,
             system=prompts.SYSTEM,
             temperature=0.7,
             max_tokens=8192,

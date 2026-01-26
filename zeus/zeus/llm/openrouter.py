@@ -3,7 +3,11 @@
 import os
 import json
 import httpx
-from typing import Any
+from typing import Any, Type, TypeVar
+import re
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class OpenRouterClient:
@@ -41,7 +45,7 @@ class OpenRouterClient:
         system: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        json_mode: bool = False,
+        response_format: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, int]]:
         """Generate a response from the LLM.
 
@@ -50,7 +54,7 @@ class OpenRouterClient:
             system: Optional system prompt.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
-            json_mode: Whether to request JSON output.
+            response_format: Optional structured output format.
 
         Returns:
             Tuple of (response_content, usage_stats).
@@ -70,8 +74,8 @@ class OpenRouterClient:
             "max_tokens": max_tokens,
         }
 
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
+        if response_format:
+            payload["response_format"] = response_format
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -108,6 +112,7 @@ class OpenRouterClient:
     async def generate_json(
         self,
         prompt: str,
+        response_model: Type[BaseModel] | None = None,
         system: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
@@ -116,6 +121,7 @@ class OpenRouterClient:
 
         Args:
             prompt: User prompt.
+            response_model: Pydantic model class for structured output.
             system: Optional system prompt.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
@@ -123,19 +129,52 @@ class OpenRouterClient:
         Returns:
             Tuple of (parsed_json, usage_stats).
         """
+        response_format = None
+        if response_model:
+            schema = response_model.model_json_schema()
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "schema": schema,
+                    "strict": False
+                }
+            }
+
         content, usage = await self.generate(
             prompt=prompt,
             system=system,
             temperature=temperature,
             max_tokens=max_tokens,
-            json_mode=True,
+            response_format=response_format,
         )
 
         try:
+            # Clean up response if it contains markdown markers or other text
+            content = content.strip()
+            match = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
+            if match:
+                content = match.group(1).strip()
+            else:
+                # If no markdown, try to find the first '{' and last '}'
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1:
+                    content = content[start : end + 1]
+
             parsed = json.loads(content)
+
+            # Validate against model if provided
+            if response_model:
+                validated = response_model.model_validate(parsed)
+                return validated.model_dump(), usage
+
             return parsed, usage
-        except json.JSONDecodeError as e:
-            raise OpenRouterError(f"Failed to parse JSON response: {str(e)}") from e
+        except (json.JSONDecodeError, Exception) as e:
+            raise OpenRouterError(
+                f"Failed to parse or validate JSON response: {str(e)}\n"
+                f"Content was: {content[:1000]}"
+            ) from e
 
     async def close(self):
         """Close the HTTP client."""
