@@ -1,9 +1,22 @@
 """Data contracts for Zeus - Design Team Agent."""
 
+import os
 from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, Field
 import uuid
+
+
+def _env_int(key: str, default: int) -> int:
+    """Get integer from environment variable or default."""
+    val = os.getenv(key)
+    return int(val) if val else default
+
+
+def _env_float(key: str, default: float) -> float:
+    """Get float from environment variable or default."""
+    val = os.getenv(key)
+    return float(val) if val else default
 
 
 # ============================================================================
@@ -91,10 +104,35 @@ class ZeusResponse(BaseModel):
 # ============================================================================
 
 class BudgetConfig(BaseModel):
-    """Budget configuration for a run."""
-    max_llm_calls: int = Field(default=6, description="Hard cap on LLM calls (default: 6 for full pipeline)")
-    target_llm_calls: int = Field(default=4, description="Soft target for LLM calls")
-    max_revisions: int = Field(default=1, description="Max revision loops")
+    """Budget configuration for a run.
+
+    Defaults can be overridden via environment variables:
+    - ZEUS_MAX_LLM_CALLS
+    - ZEUS_TARGET_LLM_CALLS
+    - ZEUS_MAX_REVISIONS
+    - ZEUS_PER_CALL_TIMEOUT
+    - ZEUS_TOTAL_RUN_TIMEOUT
+    """
+    max_llm_calls: int = Field(
+        default_factory=lambda: _env_int("ZEUS_MAX_LLM_CALLS", 6),
+        description="Hard cap on LLM calls (default: 6 for full pipeline)"
+    )
+    target_llm_calls: int = Field(
+        default_factory=lambda: _env_int("ZEUS_TARGET_LLM_CALLS", 4),
+        description="Soft target for LLM calls"
+    )
+    max_revisions: int = Field(
+        default_factory=lambda: _env_int("ZEUS_MAX_REVISIONS", 1),
+        description="Max revision loops"
+    )
+    per_call_timeout: float = Field(
+        default_factory=lambda: _env_float("ZEUS_PER_CALL_TIMEOUT", 60.0),
+        description="Timeout per LLM call in seconds"
+    )
+    total_run_timeout: float = Field(
+        default_factory=lambda: _env_float("ZEUS_TOTAL_RUN_TIMEOUT", 300.0),
+        description="Total run timeout in seconds (5 min default)"
+    )
 
 
 class BudgetUsed(BaseModel):

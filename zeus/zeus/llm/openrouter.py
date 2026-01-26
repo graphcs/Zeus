@@ -98,6 +98,8 @@ class OpenRouterClient:
 
             return content, usage_stats
 
+        except httpx.TimeoutException as e:
+            raise OpenRouterTimeoutError(f"Request timed out after {self.timeout}s: {str(e)}") from e
         except httpx.HTTPStatusError as e:
             raise OpenRouterError(f"API request failed: {e.response.status_code} - {e.response.text}") from e
         except httpx.RequestError as e:
@@ -162,4 +164,9 @@ class OpenRouterClient:
 
 class OpenRouterError(Exception):
     """Error from OpenRouter API."""
+    pass
+
+
+class OpenRouterTimeoutError(OpenRouterError):
+    """Timeout error from OpenRouter API."""
     pass
