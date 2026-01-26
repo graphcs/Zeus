@@ -132,7 +132,19 @@ class OpenRouterClient:
         )
 
         try:
-            parsed = json.loads(content)
+            # Strip markdown code blocks if present
+            cleaned = content.strip()
+            if cleaned.startswith("```"):
+                # Remove opening ```json or ``` line
+                lines = cleaned.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                # Remove closing ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned = "\n".join(lines)
+
+            parsed = json.loads(cleaned)
             return parsed, usage
         except json.JSONDecodeError as e:
             raise OpenRouterError(f"Failed to parse JSON response: {str(e)}") from e
