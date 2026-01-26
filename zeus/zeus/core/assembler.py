@@ -5,11 +5,49 @@ from zeus.models.schemas import (
     Critique,
     ZeusResponse,
     RunRecord,
+    UsageStats,
 )
+
+# Pricing per 1M tokens (USD) - Claude Sonnet 4 via OpenRouter
+MODEL_PRICING = {
+    "anthropic/claude-sonnet-4": {"input": 3.00, "output": 15.00},
+    "anthropic/claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
+    "default": {"input": 3.00, "output": 15.00},
+}
 
 
 class Assembler:
     """Assembles final output from candidates and critiques."""
+
+    def _calculate_usage(self, record: RunRecord) -> UsageStats:
+        """Calculate usage statistics including cost.
+
+        Args:
+            record: The run record with budget usage.
+
+        Returns:
+            UsageStats with token counts and estimated cost.
+        """
+        budget = record.budget_used
+        tokens_in = budget.tokens_in
+        tokens_out = budget.tokens_out
+        total_tokens = tokens_in + tokens_out
+
+        # Get pricing for the model
+        pricing = MODEL_PRICING.get(record.model_version, MODEL_PRICING["default"])
+
+        # Calculate cost: (tokens / 1M) * price_per_1M
+        cost_in = (tokens_in / 1_000_000) * pricing["input"]
+        cost_out = (tokens_out / 1_000_000) * pricing["output"]
+        cost_usd = round(cost_in + cost_out, 6)
+
+        return UsageStats(
+            llm_calls=budget.llm_calls,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+        )
 
     def assemble(self, record: RunRecord) -> ZeusResponse:
         """Assemble the final response from a run record.
@@ -27,6 +65,9 @@ class Assembler:
         # Use the latest candidate (v2 if exists, else v1)
         final_candidate = record.candidate_v2 or record.candidate_v1
 
+        # Calculate usage stats
+        usage = self._calculate_usage(record)
+
         if final_candidate is None:
             # Graceful degradation - no candidate generated
             return ZeusResponse(
@@ -34,6 +75,7 @@ class Assembler:
                 assumptions=["Generation failed - no assumptions available"],
                 known_issues=record.errors or ["Generation failed"],
                 run_id=record.run_id,
+                usage=usage,
             )
 
         # Collect known issues from critique
@@ -52,6 +94,7 @@ class Assembler:
             assumptions=assumptions,
             known_issues=known_issues,
             run_id=record.run_id,
+            usage=usage,
         )
 
     def _format_output(self, candidate: Candidate, record: RunRecord) -> str:

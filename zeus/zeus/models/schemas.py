@@ -68,17 +68,34 @@ class Plan(BaseModel):
 # Output Models
 # ============================================================================
 
+class UsageStats(BaseModel):
+    """Token usage and cost statistics for a run."""
+    llm_calls: int = Field(default=0, description="Number of LLM calls made")
+    tokens_in: int = Field(default=0, description="Total input tokens")
+    tokens_out: int = Field(default=0, description="Total output tokens")
+    total_tokens: int = Field(default=0, description="Total tokens (in + out)")
+    cost_usd: float = Field(default=0.0, description="Estimated cost in USD")
+
+
 class ZeusResponse(BaseModel):
     """Final output from Zeus."""
     output: str = Field(..., description="Design Brief or Target Solution (Markdown)")
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made (always present)")
     known_issues: list[str] = Field(default_factory=list, description="Known issues (always present)")
     run_id: str = Field(..., description="Unique run identifier")
+    usage: UsageStats = Field(default_factory=UsageStats, description="Token usage and cost")
 
 
 # ============================================================================
 # Traceability Models
 # ============================================================================
+
+class BudgetConfig(BaseModel):
+    """Budget configuration for a run."""
+    max_llm_calls: int = Field(default=6, description="Hard cap on LLM calls (default: 6 for full pipeline)")
+    target_llm_calls: int = Field(default=4, description="Soft target for LLM calls")
+    max_revisions: int = Field(default=1, description="Max revision loops")
+
 
 class BudgetUsed(BaseModel):
     """Budget tracking for a run."""
