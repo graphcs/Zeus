@@ -116,6 +116,8 @@ class OpenRouterClient:
     ) -> tuple[dict, dict[str, int]]:
         """Generate a JSON response from the LLM.
 
+        Includes one repair pass on parse failure before raising an error.
+
         Args:
             prompt: User prompt.
             system: Optional system prompt.
@@ -123,7 +125,7 @@ class OpenRouterClient:
             max_tokens: Maximum tokens to generate.
 
         Returns:
-            Tuple of (parsed_json, usage_stats).
+            Tuple of (parsed_json, total_usage_stats).
         """
         content, usage = await self.generate(
             prompt=prompt,
@@ -133,23 +135,89 @@ class OpenRouterClient:
             json_mode=True,
         )
 
-        try:
-            # Strip markdown code blocks if present
-            cleaned = content.strip()
-            if cleaned.startswith("```"):
-                # Remove opening ```json or ``` line
-                lines = cleaned.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                # Remove closing ```
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned = "\n".join(lines)
+        # First attempt: try to parse the response
+        cleaned = self._clean_json_response(content)
+        parse_error = None
 
+        try:
             parsed = json.loads(cleaned)
             return parsed, usage
         except json.JSONDecodeError as e:
-            raise OpenRouterError(f"Failed to parse JSON response: {str(e)}") from e
+            parse_error = e
+
+        # Repair pass: ask LLM to fix the malformed JSON
+        repair_prompt = self._build_repair_prompt(content, str(parse_error))
+
+        try:
+            repaired_content, repair_usage = await self.generate(
+                prompt=repair_prompt,
+                system="You are a JSON repair assistant. Output only valid JSON, no explanations.",
+                temperature=0.0,  # Deterministic for repair
+                max_tokens=max_tokens,
+                json_mode=True,
+            )
+
+            # Combine usage stats
+            total_usage = {
+                "tokens_in": usage.get("tokens_in", 0) + repair_usage.get("tokens_in", 0),
+                "tokens_out": usage.get("tokens_out", 0) + repair_usage.get("tokens_out", 0),
+            }
+
+            # Try to parse repaired response
+            cleaned_repair = self._clean_json_response(repaired_content)
+            parsed = json.loads(cleaned_repair)
+            return parsed, total_usage
+
+        except (json.JSONDecodeError, OpenRouterError) as repair_error:
+            # Both attempts failed
+            raise OpenRouterError(
+                f"Failed to parse JSON response after repair attempt. "
+                f"Original error: {parse_error}. Repair error: {repair_error}"
+            ) from parse_error
+
+    def _clean_json_response(self, content: str) -> str:
+        """Clean JSON response by stripping markdown code blocks.
+
+        Args:
+            content: Raw response content.
+
+        Returns:
+            Cleaned content ready for JSON parsing.
+        """
+        cleaned = content.strip()
+
+        # Strip markdown code blocks if present
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            # Remove opening ```json or ``` line
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            # Remove closing ```
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines)
+
+        return cleaned
+
+    def _build_repair_prompt(self, malformed_json: str, error_message: str) -> str:
+        """Build a prompt to repair malformed JSON.
+
+        Args:
+            malformed_json: The malformed JSON string.
+            error_message: The parse error message.
+
+        Returns:
+            Repair prompt for the LLM.
+        """
+        return f"""The following JSON is malformed and failed to parse:
+
+```
+{malformed_json}
+```
+
+Parse error: {error_message}
+
+Please fix the JSON and return only the corrected, valid JSON object. Do not include any explanation or markdown formatting."""
 
     async def close(self):
         """Close the HTTP client."""
