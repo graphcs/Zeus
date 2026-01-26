@@ -1,0 +1,268 @@
+"""CLI interface for Zeus."""
+
+import asyncio
+import sys
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.markdown import Markdown
+
+from zeus.core.run_controller import run_zeus
+from zeus.core.persistence import Persistence
+
+app = typer.Typer(
+    name="zeus",
+    help="Zeus - Design Team Agent for multi-agent systems",
+    add_completion=False,
+)
+console = Console()
+
+
+def print_response(output: str, assumptions: list[str], known_issues: list[str], run_id: str) -> None:
+    """Print the Zeus response in a formatted way."""
+    # Main output
+    console.print(Markdown(output))
+
+    # Assumptions
+    console.print()
+    console.print(Panel(
+        "\n".join(f"• {a}" for a in assumptions),
+        title="📋 Assumptions",
+        border_style="blue",
+    ))
+
+    # Known Issues
+    console.print()
+    console.print(Panel(
+        "\n".join(f"• {i}" for i in known_issues),
+        title="⚠️ Known Issues",
+        border_style="yellow",
+    ))
+
+    # Run ID
+    console.print()
+    console.print(f"[dim]Run ID: {run_id}[/dim]")
+
+
+@app.command()
+def brief(
+    prompt: str = typer.Argument(..., help="The idea or problem to create a design brief for"),
+    constraint: Optional[list[str]] = typer.Option(
+        None,
+        "--constraint", "-c",
+        help="Add a constraint (can be used multiple times)",
+    ),
+    context: Optional[str] = typer.Option(
+        None,
+        "--context",
+        help="Additional context as a string",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model", "-m",
+        help="Override the default model",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Save output to file",
+    ),
+) -> None:
+    """Generate a Design Brief from an idea or problem statement.
+
+    Example:
+        zeus brief "Build a system that automatically reviews code changes"
+        zeus brief "Build a code review system" -c "Must be async" -c "No external deps"
+    """
+    constraints = list(constraint) if constraint else []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Starting Zeus...", total=None)
+
+        def on_progress(msg: str) -> None:
+            progress.update(task, description=msg)
+
+        try:
+            response = asyncio.run(run_zeus(
+                prompt=prompt,
+                mode="brief",
+                constraints=constraints,
+                context=context,
+                model=model,
+                on_progress=on_progress,
+            ))
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+    print_response(response.output, response.assumptions, response.known_issues, response.run_id)
+
+    if output_file:
+        output_file.write_text(response.output)
+        console.print(f"\n[green]Output saved to {output_file}[/green]")
+
+
+@app.command()
+def solution(
+    prompt: Optional[str] = typer.Argument(
+        None,
+        help="The design brief text (alternative to --file)",
+    ),
+    file: Optional[Path] = typer.Option(
+        None,
+        "--file", "-f",
+        help="Path to design brief file",
+        exists=True,
+        readable=True,
+    ),
+    constraint: Optional[list[str]] = typer.Option(
+        None,
+        "--constraint", "-c",
+        help="Add a constraint (can be used multiple times)",
+    ),
+    context: Optional[str] = typer.Option(
+        None,
+        "--context",
+        help="Additional context as a string",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model", "-m",
+        help="Override the default model",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output", "-o",
+        help="Save output to file",
+    ),
+) -> None:
+    """Generate a Target Solution from a Design Brief.
+
+    Example:
+        zeus solution --file design_brief.md
+        zeus solution "$(cat design_brief.md)"
+    """
+    # Get input from file or argument
+    if file:
+        input_text = file.read_text()
+    elif prompt:
+        input_text = prompt
+    else:
+        console.print("[red]Error:[/red] Provide either a prompt argument or --file option")
+        raise typer.Exit(1)
+
+    constraints = list(constraint) if constraint else []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Starting Zeus...", total=None)
+
+        def on_progress(msg: str) -> None:
+            progress.update(task, description=msg)
+
+        try:
+            response = asyncio.run(run_zeus(
+                prompt=input_text,
+                mode="solution",
+                constraints=constraints,
+                context=context,
+                model=model,
+                on_progress=on_progress,
+            ))
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+    print_response(response.output, response.assumptions, response.known_issues, response.run_id)
+
+    if output_file:
+        output_file.write_text(response.output)
+        console.print(f"\n[green]Output saved to {output_file}[/green]")
+
+
+@app.command()
+def history(
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of runs to show"),
+) -> None:
+    """Show recent Zeus runs."""
+    persistence = Persistence()
+    runs = persistence.list_runs(limit=limit)
+
+    if not runs:
+        console.print("[dim]No runs found[/dim]")
+        return
+
+    console.print(f"\n[bold]Recent Zeus Runs[/bold] (showing {len(runs)} of {limit} max)\n")
+
+    for run in runs:
+        status = "✅" if run["has_response"] else "❌"
+        errors = f" ({run['errors']} errors)" if run["errors"] > 0 else ""
+        console.print(
+            f"  {status} [{run['mode']}] {run['run_id'][:8]}... "
+            f"[dim]{run['timestamp']}[/dim]{errors}"
+        )
+
+
+@app.command()
+def show(
+    run_id: str = typer.Argument(..., help="Run ID (or prefix) to show"),
+) -> None:
+    """Show details of a specific run."""
+    persistence = Persistence()
+    record = persistence.load(run_id)
+
+    if not record:
+        console.print(f"[red]Run not found:[/red] {run_id}")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Run Details: {record.run_id}[/bold]\n")
+    console.print(f"Mode: {record.mode}")
+    console.print(f"Timestamp: {record.timestamp}")
+    console.print(f"Model: {record.model_version}")
+
+    if record.budget_used:
+        console.print(f"\nBudget Used:")
+        console.print(f"  LLM Calls: {record.budget_used.llm_calls}")
+        console.print(f"  Tokens In: {record.budget_used.tokens_in}")
+        console.print(f"  Tokens Out: {record.budget_used.tokens_out}")
+        console.print(f"  Revisions: {record.budget_used.revisions}")
+
+    if record.errors:
+        console.print(f"\n[red]Errors:[/red]")
+        for error in record.errors:
+            console.print(f"  - {error}")
+
+    if record.final_response:
+        console.print("\n[bold]Final Response:[/bold]")
+        print_response(
+            record.final_response.output,
+            record.final_response.assumptions,
+            record.final_response.known_issues,
+            record.final_response.run_id,
+        )
+
+
+@app.callback()
+def main() -> None:
+    """Zeus - Design Team Agent.
+
+    Generate Design Briefs from ideas, or Target Solutions from Design Briefs.
+    """
+    pass
+
+
+if __name__ == "__main__":
+    app()
