@@ -12,6 +12,8 @@ from zeus.models.schemas import (
     PlanStep,
     RunRecord,
     BudgetUsed,
+    Tradeoff,
+    REQUIRED_PERSPECTIVES,
 )
 
 
@@ -184,3 +186,88 @@ class TestZeusResponse:
         assert response.assumptions is not None
         assert response.known_issues is not None
         assert response.run_id == "test-123"
+
+    def test_v1_evaluation_signals(self):
+        """Test V1 evaluation signal fields."""
+        response = ZeusResponse(
+            output="# Output",
+            run_id="test-123",
+            confidence="high",
+            coverage_score=0.83,
+            covered_perspectives=["scope", "architecture", "risk", "security", "evaluation"],
+            missing_perspectives=["compliance"],
+            tradeoffs=[
+                Tradeoff(
+                    chose="SQLite",
+                    over="PostgreSQL",
+                    rationale="Simpler deployment",
+                    impact="medium",
+                )
+            ],
+        )
+        assert response.confidence == "high"
+        assert response.coverage_score == 0.83
+        assert len(response.covered_perspectives) == 5
+        assert "compliance" in response.missing_perspectives
+        assert len(response.tradeoffs) == 1
+
+
+class TestTradeoff:
+    """Tests for Tradeoff model."""
+
+    def test_create_tradeoff(self):
+        """Test creating a tradeoff."""
+        tradeoff = Tradeoff(
+            chose="REST API",
+            over="GraphQL",
+            rationale="Team familiarity",
+            impact="high",
+        )
+        assert tradeoff.chose == "REST API"
+        assert tradeoff.over == "GraphQL"
+        assert tradeoff.impact == "high"
+
+    def test_tradeoff_defaults(self):
+        """Test tradeoff default values."""
+        tradeoff = Tradeoff(
+            chose="Option A",
+            over="Option B",
+            rationale="Reason",
+        )
+        assert tradeoff.impact == "medium"  # Default
+
+
+class TestCritiqueIssueCategory:
+    """Tests for CritiqueIssue category field."""
+
+    def test_issue_with_category(self):
+        """Test creating an issue with category."""
+        issue = CritiqueIssue(
+            role="architecture",
+            severity="major",
+            category="maintainability",
+            description="Tight coupling between components",
+        )
+        assert issue.category == "maintainability"
+
+    def test_issue_default_category(self):
+        """Test default category value."""
+        issue = CritiqueIssue(
+            role="scope",
+            severity="minor",
+            description="Minor scope gap",
+        )
+        assert issue.category == "completeness"  # Default
+
+
+class TestRequiredPerspectives:
+    """Tests for required perspectives constant."""
+
+    def test_required_perspectives_count(self):
+        """Test that we have 6 required perspectives."""
+        assert len(REQUIRED_PERSPECTIVES) == 6
+
+    def test_required_perspectives_content(self):
+        """Test required perspective names."""
+        expected = {"scope", "architecture", "risk", "security", "compliance", "evaluation"}
+        assert REQUIRED_PERSPECTIVES == expected

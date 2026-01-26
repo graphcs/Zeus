@@ -1,7 +1,7 @@
 """Data contracts for Zeus - Design Team Agent."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from pydantic import BaseModel, Field
 import uuid
@@ -43,17 +43,91 @@ class NormalizedProblem(BaseModel):
     context: dict = Field(default_factory=dict, description="Parsed context")
 
 
+class Tradeoff(BaseModel):
+    """A design tradeoff made in the solution."""
+    chose: str = Field(..., description="What was chosen")
+    over: str = Field(..., description="What was sacrificed")
+    rationale: str = Field(..., description="Why this choice was made")
+    impact: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Impact level of this tradeoff"
+    )
+
+
 class Candidate(BaseModel):
     """A generated design brief or solution candidate."""
     content: str = Field(..., description="Design brief or solution content")
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made")
     uncertainty_flags: list[str] = Field(default_factory=list, description="Areas of uncertainty")
+    tradeoffs: list[Tradeoff] = Field(default_factory=list, description="Design tradeoffs made")
+
+
+# V1 Constants
+ISSUE_CATEGORIES = Literal[
+    "correctness", "completeness", "clarity", "feasibility",
+    "maintainability", "performance", "security", "compliance"
+]
+
+# Set for runtime validation
+VALID_ISSUE_CATEGORIES = frozenset({
+    "correctness", "completeness", "clarity", "feasibility",
+    "maintainability", "performance", "security", "compliance"
+})
+
+CONFIDENCE_LEVELS = Literal["low", "medium", "high"]
+
+REQUIRED_PERSPECTIVES = frozenset({
+    "scope", "architecture", "risk", "security", "compliance", "evaluation"
+})
+
+# Mapping of alternative names to canonical perspective names
+PERSPECTIVE_ALIASES: dict[str, str] = {
+    # Scope aliases
+    "completeness": "scope",
+    "scope_check": "scope",
+    "boundaries": "scope",
+    "requirements": "scope",
+    "scope_definition": "scope",
+    # Architecture aliases
+    "structural": "architecture",
+    "design": "architecture",
+    "system_design": "architecture",
+    "technical": "architecture",
+    "feasibility": "architecture",
+    # Risk aliases
+    "failure_modes": "risk",
+    "risks": "risk",
+    "risk_assessment": "risk",
+    # Security aliases
+    "security_review": "security",
+    "vulnerabilities": "security",
+    "security_ops": "security",
+    "ops": "security",
+    "operations": "security",
+    # Compliance aliases
+    "regulatory": "compliance",
+    "policy": "compliance",
+    "governance": "compliance",
+    "constraints": "compliance",
+    "constraint_compliance": "compliance",
+    # Evaluation aliases
+    "testability": "evaluation",
+    "success_criteria": "evaluation",
+    "metrics": "evaluation",
+    "measurability": "evaluation",
+    "testing": "evaluation",
+    "experimentation": "evaluation",
+}
 
 
 class CritiqueIssue(BaseModel):
     """A single issue identified during critique."""
     role: str = Field(..., description="Critique perspective, e.g., 'completeness', 'architecture'")
     severity: Literal["blocker", "major", "minor"] = Field(..., description="Issue severity")
+    category: ISSUE_CATEGORIES = Field(
+        default="completeness",
+        description="Issue category from taxonomy"
+    )
     description: str = Field(..., description="Issue description")
     suggested_fix: str | None = Field(default=None, description="Suggested fix if available")
 
@@ -92,11 +166,46 @@ class UsageStats(BaseModel):
 
 class ZeusResponse(BaseModel):
     """Final output from Zeus."""
+    # Core fields
     output: str = Field(..., description="Design Brief or Target Solution (Markdown)")
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made (always present)")
     known_issues: list[str] = Field(default_factory=list, description="Known issues (always present)")
     run_id: str = Field(..., description="Unique run identifier")
     usage: UsageStats = Field(default_factory=UsageStats, description="Token usage and cost")
+
+    # V1 Evaluation Signals
+    confidence: CONFIDENCE_LEVELS = Field(
+        default="medium",
+        description="Confidence level based on critique severity"
+    )
+    coverage_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Perspective coverage ratio (0.0-1.0)"
+    )
+    covered_perspectives: list[str] = Field(
+        default_factory=list,
+        description="List of perspectives covered in critique"
+    )
+    missing_perspectives: list[str] = Field(
+        default_factory=list,
+        description="List of perspectives not covered"
+    )
+    tradeoffs: list[Tradeoff] = Field(
+        default_factory=list,
+        description="Design tradeoffs documented"
+    )
+
+    # V1 Issue breakdown for CLI display
+    issue_counts: dict[str, int] = Field(
+        default_factory=lambda: {"blockers": 0, "majors": 0, "minors": 0},
+        description="Count of issues by severity"
+    )
+    issues_by_category: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Known issues grouped by category"
+    )
 
 
 # ============================================================================
@@ -146,7 +255,7 @@ class BudgetUsed(BaseModel):
 class RunRecord(BaseModel):
     """Complete record of a Zeus run for traceability."""
     run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     mode: Literal["brief", "solution"]
     request: ZeusRequest
     normalized_problem: NormalizedProblem | None = None

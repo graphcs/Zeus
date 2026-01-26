@@ -1,7 +1,7 @@
 """Generator - LLM-based generation of candidates."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Plan, Candidate, Critique
+from zeus.models.schemas import NormalizedProblem, Plan, Candidate, Critique, Tradeoff
 from zeus.llm.openrouter import OpenRouterClient
 from zeus.prompts.design_brief import DesignBriefPrompts
 from zeus.prompts.solution_designer import SolutionDesignerPrompts
@@ -52,10 +52,14 @@ class Generator:
             max_tokens=8192,  # Larger output for comprehensive content
         )
 
+        # Parse tradeoffs from response
+        tradeoffs = self._parse_tradeoffs(response.get("tradeoffs", []))
+
         candidate = Candidate(
             content=response.get("content", ""),
             assumptions=response.get("assumptions", []),
             uncertainty_flags=response.get("uncertainty_flags", []),
+            tradeoffs=tradeoffs,
         )
 
         return candidate, usage
@@ -98,13 +102,42 @@ class Generator:
             max_tokens=8192,
         )
 
+        # Parse tradeoffs, keep original if not provided
+        tradeoffs = self._parse_tradeoffs(response.get("tradeoffs", []))
+        if not tradeoffs:
+            tradeoffs = candidate.tradeoffs
+
         revised = Candidate(
             content=response.get("content", candidate.content),
             assumptions=response.get("assumptions", candidate.assumptions),
             uncertainty_flags=response.get("uncertainty_flags", candidate.uncertainty_flags),
+            tradeoffs=tradeoffs,
         )
 
         return revised, usage
+
+    def _parse_tradeoffs(self, raw_tradeoffs: list) -> list[Tradeoff]:
+        """Parse tradeoffs from LLM response.
+
+        Args:
+            raw_tradeoffs: List of tradeoff dictionaries from LLM.
+
+        Returns:
+            List of validated Tradeoff objects.
+        """
+        tradeoffs = []
+        for t in raw_tradeoffs:
+            if isinstance(t, dict) and "chose" in t and "over" in t:
+                impact = t.get("impact", "medium")
+                if impact not in ("low", "medium", "high"):
+                    impact = "medium"
+                tradeoffs.append(Tradeoff(
+                    chose=t["chose"],
+                    over=t["over"],
+                    rationale=t.get("rationale", ""),
+                    impact=impact,
+                ))
+        return tradeoffs
 
     def _format_plan(self, plan: Plan) -> str:
         """Format plan for prompt."""

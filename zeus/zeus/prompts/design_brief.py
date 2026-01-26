@@ -4,7 +4,7 @@
 class DesignBriefPrompts:
     """Prompts for generating and critiquing Design Briefs."""
 
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"  # V1: Added tradeoffs and issue categories
 
     SYSTEM = """You are an expert Design Brief architect. Your role is to transform raw ideas and problem statements into structured, comprehensive Design Briefs.
 
@@ -86,11 +86,21 @@ Generate the Design Brief in Markdown format with these sections:
 8. **Success Criteria** - How to measure if the solution meets the brief
 9. **Open Questions** - Areas needing clarification
 
-Also return structured metadata:
+Also document any significant TRADEOFFS you made - decisions where you chose one approach over another.
+
+Return structured metadata:
 {{
     "content": "The full Markdown design brief",
     "assumptions": ["List of assumptions made"],
-    "uncertainty_flags": ["Areas of uncertainty or things needing clarification"]
+    "uncertainty_flags": ["Areas of uncertainty or things needing clarification"],
+    "tradeoffs": [
+        {{
+            "chose": "What you chose",
+            "over": "What you rejected",
+            "rationale": "Why you made this choice",
+            "impact": "low|medium|high"
+        }}
+    ]
 }}"""
 
     CRITIQUE = """Critique the following Design Brief from multiple perspectives.
@@ -146,6 +156,7 @@ Return a JSON object:
         {{
             "role": "scope|architecture|risk|security|compliance|evaluation",
             "severity": "blocker|major|minor",
+            "category": "correctness|completeness|clarity|feasibility|maintainability|performance|security|compliance",
             "description": "What the issue is",
             "suggested_fix": "How to fix it (or null)"
         }}
@@ -153,6 +164,16 @@ Return a JSON object:
     "constraint_violations": ["List any user constraints not reflected in the brief"],
     "missing_perspectives": ["Any perspectives beyond the 6 that were not considered"]
 }}
+
+Issue categories:
+- correctness: Logical or factual errors
+- completeness: Missing required elements
+- clarity: Ambiguous or unclear content
+- feasibility: Implementation concerns
+- maintainability: Long-term health concerns
+- performance: Efficiency concerns
+- security: Security vulnerabilities
+- compliance: Policy/regulation issues
 
 IMPORTANT: You must provide at least one issue or observation from EACH of the 6 perspectives, even if it's just to note that the perspective was adequately addressed (as a "minor" observation).
 
@@ -179,7 +200,15 @@ Return:
 {{
     "content": "The revised Markdown design brief",
     "assumptions": ["Updated list of assumptions"],
-    "uncertainty_flags": ["Updated areas of uncertainty"]
+    "uncertainty_flags": ["Updated areas of uncertainty"],
+    "tradeoffs": [
+        {{
+            "chose": "What you chose",
+            "over": "What you rejected",
+            "rationale": "Why you made this choice",
+            "impact": "low|medium|high"
+        }}
+    ]
 }}"""
 
     @classmethod

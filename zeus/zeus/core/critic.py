@@ -1,48 +1,18 @@
 """Critic - Multi-view critique of candidates."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Candidate, Critique, CritiqueIssue
+from zeus.models.schemas import (
+    NormalizedProblem,
+    Candidate,
+    Critique,
+    CritiqueIssue,
+    REQUIRED_PERSPECTIVES,
+    PERSPECTIVE_ALIASES,
+    VALID_ISSUE_CATEGORIES,
+)
 from zeus.llm.openrouter import OpenRouterClient
 from zeus.prompts.design_brief import DesignBriefPrompts
 from zeus.prompts.solution_designer import SolutionDesignerPrompts
-
-
-# Required perspectives for critique coverage (MVP spec)
-REQUIRED_PERSPECTIVES = frozenset({
-    "scope",        # Requirements/scope coverage
-    "architecture", # Technical architecture review
-    "risk",         # Risk assessment
-    "security",     # Security/ops considerations
-    "compliance",   # Compliance with constraints
-    "evaluation",   # Evaluation/experimentation readiness
-})
-
-# Mapping of alternative names to canonical perspective names
-PERSPECTIVE_ALIASES = {
-    # Scope aliases
-    "requirements": "scope",
-    "completeness": "scope",
-    "scope_definition": "scope",
-    # Architecture aliases
-    "technical": "architecture",
-    "design": "architecture",
-    "feasibility": "architecture",
-    # Risk aliases
-    "risks": "risk",
-    "risk_assessment": "risk",
-    # Security aliases
-    "security_ops": "security",
-    "ops": "security",
-    "operations": "security",
-    # Compliance aliases
-    "constraints": "compliance",
-    "constraint_compliance": "compliance",
-    # Evaluation aliases
-    "measurability": "evaluation",
-    "testing": "evaluation",
-    "success_criteria": "evaluation",
-    "experimentation": "evaluation",
-}
 
 
 class Critic:
@@ -86,16 +56,22 @@ class Critic:
             temperature=0.5,  # Moderate temperature for balanced critique
         )
 
-        # Parse issues
+        # Parse issues with category validation
         issues = []
         for issue_data in response.get("issues", []):
             severity = issue_data.get("severity", "minor")
             if severity not in ("blocker", "major", "minor"):
                 severity = "minor"
 
+            # Validate and normalize category
+            category = issue_data.get("category", "completeness")
+            if category not in VALID_ISSUE_CATEGORIES:
+                category = self._infer_category(issue_data.get("role", ""), issue_data.get("description", ""))
+
             issues.append(CritiqueIssue(
                 role=issue_data.get("role", "general"),
                 severity=severity,
+                category=category,
                 description=issue_data.get("description", ""),
                 suggested_fix=issue_data.get("suggested_fix"),
             ))
@@ -128,6 +104,38 @@ class Critic:
             ))
 
         return critique, usage
+
+    def _infer_category(self, role: str, description: str) -> str:
+        """Infer issue category from role and description when not provided.
+
+        Args:
+            role: The critique perspective role.
+            description: The issue description.
+
+        Returns:
+            Inferred category, defaults to 'completeness'.
+        """
+        text = f"{role} {description}".lower()
+
+        # Map common keywords to categories
+        if any(word in text for word in ["error", "wrong", "incorrect", "bug", "broken"]):
+            return "correctness"
+        if any(word in text for word in ["missing", "incomplete", "lacking", "absent", "need"]):
+            return "completeness"
+        if any(word in text for word in ["unclear", "ambiguous", "vague", "confusing"]):
+            return "clarity"
+        if any(word in text for word in ["impossible", "unrealistic", "infeasible", "cannot"]):
+            return "feasibility"
+        if any(word in text for word in ["maintain", "couple", "debt", "refactor", "complex"]):
+            return "maintainability"
+        if any(word in text for word in ["slow", "performance", "memory", "latency", "scale"]):
+            return "performance"
+        if any(word in text for word in ["security", "auth", "inject", "xss", "vulnerab"]):
+            return "security"
+        if any(word in text for word in ["compliance", "regulation", "policy", "gdpr", "legal"]):
+            return "compliance"
+
+        return "completeness"  # Default category
 
     def _normalize_perspective(self, role: str) -> str | None:
         """Normalize a role/perspective name to canonical form.
