@@ -286,7 +286,7 @@ async def run_zeus(
     if total_run_timeout is not None:
         budget_kwargs["total_run_timeout"] = total_run_timeout
 
-    budget_config = BudgetConfig(**budget_kwargs) if budget_kwargs else None
+    budget_config = BudgetConfig(**budget_kwargs) if budget_kwargs else BudgetConfig()
 
     # Build client kwargs
     client_kwargs = {}
@@ -295,10 +295,8 @@ async def run_zeus(
     if model:
         client_kwargs["model"] = model
     # Pass per-call timeout to the client
-    if budget_config and budget_config.per_call_timeout:
+    if budget_config.per_call_timeout:
         client_kwargs["timeout"] = budget_config.per_call_timeout
-    elif per_call_timeout:
-        client_kwargs["timeout"] = per_call_timeout
 
     async with OpenRouterClient(**client_kwargs) as client:
         controller = RunController(client, on_progress=on_progress, budget_config=budget_config)
