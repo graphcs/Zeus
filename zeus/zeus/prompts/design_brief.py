@@ -104,31 +104,57 @@ CONSTRAINTS:
 DESIGN BRIEF:
 {content}
 
-Evaluate from these perspectives:
-1. **Completeness** - Are all necessary sections present and sufficiently detailed?
-2. **Clarity** - Is the brief unambiguous and actionable?
-3. **Measurability** - Are success criteria and requirements measurable?
-4. **Scope** - Is the scope well-defined and appropriate?
-5. **Feasibility** - Is what's described realistic and achievable?
+You MUST evaluate from ALL six required perspectives:
+
+1. **scope** - Requirements and scope coverage
+   - Are all necessary sections present and sufficiently detailed?
+   - Is the scope well-defined with clear boundaries?
+   - Are requirements complete and unambiguous?
+
+2. **architecture** - Technical architecture and feasibility
+   - Is the proposed approach technically sound?
+   - Is what's described realistic and achievable?
+   - Are there architectural gaps or inconsistencies?
+
+3. **risk** - Risk assessment
+   - What are the key risks and uncertainties?
+   - Are there mitigation strategies?
+   - What could go wrong?
+
+4. **security** - Security and operations considerations
+   - Are there security implications to consider?
+   - What operational concerns exist?
+   - Are there data privacy or access control issues?
+
+5. **compliance** - Compliance with constraints
+   - Are ALL user constraints preserved? List any that were dropped.
+   - Does the brief comply with stated requirements?
+   - Are there regulatory or policy considerations?
+
+6. **evaluation** - Evaluation and success criteria
+   - Are success criteria measurable?
+   - How will we know if the solution works?
+   - Are there clear acceptance criteria?
 
 Also check:
-- Are ALL user constraints preserved? List any that were dropped.
 - Are assumptions reasonable and clearly stated?
-- Are there perspectives or considerations missing?
+- Are there perspectives or considerations missing beyond the six required?
 
 Return a JSON object:
 {{
     "issues": [
         {{
-            "role": "Which perspective found this",
+            "role": "scope|architecture|risk|security|compliance|evaluation",
             "severity": "blocker|major|minor",
             "description": "What the issue is",
             "suggested_fix": "How to fix it (or null)"
         }}
     ],
     "constraint_violations": ["List any user constraints not reflected in the brief"],
-    "missing_perspectives": ["What important viewpoints were not considered"]
+    "missing_perspectives": ["Any perspectives beyond the 6 that were not considered"]
 }}
+
+IMPORTANT: You must provide at least one issue or observation from EACH of the 6 perspectives, even if it's just to note that the perspective was adequately addressed (as a "minor" observation).
 
 Be thorough but fair. Only mark as "blocker" issues that would make the brief unusable."""
 

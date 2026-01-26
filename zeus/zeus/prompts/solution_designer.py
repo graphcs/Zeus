@@ -120,33 +120,57 @@ DESIGN BRIEF CONTEXT:
 TARGET SOLUTION:
 {content}
 
-Evaluate from these perspectives:
-1. **Requirements Coverage** - Does the solution address all requirements from the brief?
-2. **Architecture** - Is the architecture sound, maintainable, and appropriate?
-3. **Risk Assessment** - Are risks identified and adequately mitigated?
-4. **Security** - Are security considerations thorough?
-5. **Compliance** - Does it meet all stated constraints?
-6. **Evaluability** - Can the solution be tested and verified?
+You MUST evaluate from ALL six required perspectives:
+
+1. **scope** - Requirements and scope coverage
+   - Does the solution address all requirements from the brief?
+   - Is the scope appropriate - not over or under-engineered?
+   - Are there missing components or interfaces?
+
+2. **architecture** - Technical architecture review
+   - Is the architecture sound, maintainable, and appropriate?
+   - Are architectural decisions justified with rationale?
+   - Are component relationships well-defined?
+
+3. **risk** - Risk assessment
+   - Are risks identified and adequately mitigated?
+   - What could go wrong in implementation or operation?
+   - Are there single points of failure?
+
+4. **security** - Security and operations considerations
+   - Are security considerations thorough?
+   - Are there authentication, authorization, or data protection gaps?
+   - What are the operational concerns?
+
+5. **compliance** - Compliance with constraints
+   - Are ALL constraints honored? List any violations.
+   - Does it meet all stated requirements?
+   - Are there regulatory considerations?
+
+6. **evaluation** - Evaluation and testing readiness
+   - Can the solution be tested and verified?
+   - Are success criteria measurable?
+   - Is there a clear testing strategy?
 
 Also check:
-- Are ALL constraints honored? List any violations.
-- Are architectural decisions justified with rationale?
-- Are there missing components or interfaces?
-- Is the solution over-engineered or under-engineered?
+- Are assumptions reasonable and documented?
+- Are there perspectives or considerations missing beyond the six required?
 
 Return a JSON object:
 {{
     "issues": [
         {{
-            "role": "Which perspective found this",
+            "role": "scope|architecture|risk|security|compliance|evaluation",
             "severity": "blocker|major|minor",
             "description": "What the issue is",
             "suggested_fix": "How to fix it (or null)"
         }}
     ],
     "constraint_violations": ["List any constraints not satisfied"],
-    "missing_perspectives": ["What important viewpoints were not considered"]
+    "missing_perspectives": ["Any perspectives beyond the 6 that were not considered"]
 }}
+
+IMPORTANT: You must provide at least one issue or observation from EACH of the 6 perspectives, even if it's just to note that the perspective was adequately addressed (as a "minor" observation).
 
 Be thorough but constructive. Only mark as "blocker" issues that would make the solution unimplementable or fundamentally flawed."""
 

@@ -13,6 +13,7 @@ from rich.markdown import Markdown
 
 from zeus.core.run_controller import run_zeus
 from zeus.core.persistence import Persistence
+from zeus.models.schemas import UsageStats
 
 app = typer.Typer(
     name="zeus",
@@ -22,7 +23,13 @@ app = typer.Typer(
 console = Console()
 
 
-def print_response(output: str, assumptions: list[str], known_issues: list[str], run_id: str) -> None:
+def print_response(
+    output: str,
+    assumptions: list[str],
+    known_issues: list[str],
+    run_id: str,
+    usage: UsageStats | None = None,
+) -> None:
     """Print the Zeus response in a formatted way."""
     # Main output
     console.print(Markdown(output))
@@ -42,6 +49,20 @@ def print_response(output: str, assumptions: list[str], known_issues: list[str],
         title="⚠️ Known Issues",
         border_style="yellow",
     ))
+
+    # Usage stats
+    if usage:
+        console.print()
+        usage_text = (
+            f"LLM Calls: {usage.llm_calls} | "
+            f"Tokens: {usage.tokens_in:,} in / {usage.tokens_out:,} out ({usage.total_tokens:,} total) | "
+            f"Cost: ${usage.cost_usd:.4f}"
+        )
+        console.print(Panel(
+            usage_text,
+            title="📊 Usage",
+            border_style="green",
+        ))
 
     # Run ID
     console.print()
@@ -104,7 +125,7 @@ def brief(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    print_response(response.output, response.assumptions, response.known_issues, response.run_id)
+    print_response(response.output, response.assumptions, response.known_issues, response.run_id, response.usage)
 
     if output_file:
         output_file.write_text(response.output)
@@ -186,7 +207,7 @@ def solution(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    print_response(response.output, response.assumptions, response.known_issues, response.run_id)
+    print_response(response.output, response.assumptions, response.known_issues, response.run_id, response.usage)
 
     if output_file:
         output_file.write_text(response.output)
@@ -234,10 +255,10 @@ def show(
     console.print(f"Model: {record.model_version}")
 
     if record.budget_used:
+        total_tokens = record.budget_used.tokens_in + record.budget_used.tokens_out
         console.print(f"\nBudget Used:")
         console.print(f"  LLM Calls: {record.budget_used.llm_calls}")
-        console.print(f"  Tokens In: {record.budget_used.tokens_in}")
-        console.print(f"  Tokens Out: {record.budget_used.tokens_out}")
+        console.print(f"  Tokens: {record.budget_used.tokens_in:,} in / {record.budget_used.tokens_out:,} out ({total_tokens:,} total)")
         console.print(f"  Revisions: {record.budget_used.revisions}")
 
     if record.errors:
@@ -247,11 +268,14 @@ def show(
 
     if record.final_response:
         console.print("\n[bold]Final Response:[/bold]")
+        # Get usage from final_response if available, otherwise None
+        usage = getattr(record.final_response, 'usage', None)
         print_response(
             record.final_response.output,
             record.final_response.assumptions,
             record.final_response.known_issues,
             record.final_response.run_id,
+            usage,
         )
 
 
