@@ -191,8 +191,3 @@ pytest                          # Run all tests
 pytest tests/test_schemas.py    # Run specific test file
 ```
 
----
-
-## License
-
-MIT
