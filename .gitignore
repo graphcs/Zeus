@@ -55,3 +55,6 @@ htmlcov/
 
 # Run records (keep directory but ignore contents)
 zeus/run_records/*.json
+
+# Claude Code
+CLAUDE.md
