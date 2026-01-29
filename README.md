@@ -23,7 +23,7 @@ The system enforces a bounded, linear pipeline where every generation undergoes 
 
 ```bash
 cd zeus
-pip install -e .
+uv sync
 ```
 
 ### Configuration
@@ -38,95 +38,9 @@ export OPENROUTER_API_KEY="your-api-key"
 
 ## Usage
 
-### Generate a Design Brief
-
-Transform a raw idea into a structured design document:
-
 ```bash
-zeus brief "Build a system that automatically reviews code changes"
-```
-
-With constraints:
-
-```bash
-zeus brief "Build a code review system" \
-  --constraint "Must support async operations" \
-  --constraint "No external dependencies beyond the LLM"
-```
-
-Save output to file:
-
-```bash
-zeus brief "Build a notification system" --output design_brief.md
-```
-
-### Generate a Target Solution
-
-Transform a Design Brief into a comprehensive solution:
-
-```bash
-zeus solution --file design_brief.md
-```
-
-With additional constraints:
-
-```bash
-zeus solution --file design_brief.md --constraint "Must use PostgreSQL"
-```
-
-### View Run History
-
-```bash
-zeus history              # List recent runs
-zeus history --limit 20   # Show more runs
-zeus show <run-id>        # View details of a specific run
-```
-
----
-
-## Example
-
-### Input
-
-```bash
-zeus brief "Design a rate limiting system for an API gateway"
-```
-
-### Output
-
-The system produces a structured Design Brief containing:
-
-- **Problem Statement**: Normalized and clarified problem definition
-- **Objectives**: What success looks like
-- **Constraints**: Hard requirements the solution must respect
-- **Output Specification**: Expected deliverables
-- **Assumptions**: Explicit assumptions made during analysis
-- **Known Issues**: Limitations, uncertainties, or areas needing clarification
-
-Every run also returns a `run_id` for full traceability. The complete execution history, including intermediate artifacts and critique results, is persisted to `zeus/run_records/`.
-
----
-
-## Programmatic Usage
-
-```python
-import asyncio
-from zeus.core.run_controller import run_zeus
-
-async def main():
-    response = await run_zeus(
-        prompt="Build a task management system",
-        mode="brief",
-        constraints=["Must support offline mode"],
-    )
-
-    print(response.output)
-    print("Assumptions:", response.assumptions)
-    print("Known Issues:", response.known_issues)
-    print("Run ID:", response.run_id)
-
-asyncio.run(main())
-```
+uv run streamlit zeus/ui.py
+``` 
 
 ---
 
@@ -162,7 +76,8 @@ Normalize → Plan → Generate v1 → Critique v1 → [Revise → Critique v2] 
 ```
 zeus/
 ├── zeus/
-│   ├── cli.py                  # Command-line interface
+│   ├── cli.py   # Command Line Interface
+|   ├── ui.py    # Streamlit UI            
 │   ├── core/
 │   │   ├── run_controller.py   # Pipeline orchestration
 │   │   ├── normalizer.py       # Input normalization

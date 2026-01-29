@@ -69,6 +69,49 @@ def print_response(
     console.print(f"[dim]Run ID: {run_id}[/dim]")
 
 
+
+def read_file_content(file_path: Path) -> str:
+    """Read content from a file based on its extension."""
+    suffix = file_path.suffix.lower()
+
+    if not file_path.exists():
+        console.print(f"[yellow]Warning: File not found: {file_path}[/yellow]")
+        return ""
+
+    try:
+        if suffix == ".pdf":
+            try:
+                import pypdf
+            except ImportError:
+                console.print(f"[red]Error reading {file_path}: pypdf not installed.[/red]")
+                return ""
+                
+            reader = pypdf.PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return f"--- File: {file_path.name} ---\n{text}\n"
+
+        elif suffix in [".docx", ".doc"]:
+            try:
+                import docx
+            except ImportError:
+                console.print(f"[red]Error reading {file_path}: python-docx not installed.[/red]")
+                return ""
+            
+            doc = docx.Document(file_path)
+            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            return f"--- File: {file_path.name} ---\n{text}\n"
+
+        else:
+            # Assume text for everything else (md, txt, etc)
+            return f"--- File: {file_path.name} ---\n{file_path.read_text(encoding='utf-8')}\n"
+
+    except Exception as e:
+        console.print(f"[red]Error reading file {file_path}: {e}[/red]")
+        return ""
+
+
 @app.command()
 def brief(
     prompt: str = typer.Argument(..., help="The idea or problem to create a design brief for"),
@@ -81,6 +124,11 @@ def brief(
         None,
         "--context",
         help="Additional context as a string",
+    ),
+    file: Optional[list[Path]] = typer.Option(
+        None,
+        "--file", "-f",
+        help="Additional context file (e.g. .md, .pdf, .docx, .txt)",
     ),
     model: Optional[str] = typer.Option(
         None,
@@ -101,6 +149,19 @@ def brief(
     """
     constraints = list(constraint) if constraint else []
 
+    # Process context from string and files
+    context_parts = []
+    if context:
+        context_parts.append(context)
+    
+    if file:
+        for f in file:
+            content = read_file_content(f)
+            if content:
+                context_parts.append(content)
+    
+    combined_context = "\n\n".join(context_parts) if context_parts else None
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -117,7 +178,7 @@ def brief(
                 prompt=prompt,
                 mode="brief",
                 constraints=constraints,
-                context=context,
+                context=combined_context,
                 model=model,
                 on_progress=on_progress,
             ))
@@ -249,7 +310,7 @@ def show(
         console.print(f"[red]Run not found:[/red] {run_id}")
         raise typer.Exit(1)
 
-    console.print(f"\n[bold]Run Details: {record.run_id}[/bold]\n")
+    console.print(f"\n[bold]Run details: {record.run_id}[/bold]\n")
     console.print(f"Mode: {record.mode}")
     console.print(f"Timestamp: {record.timestamp}")
     console.print(f"Model: {record.model_version}")
@@ -277,6 +338,27 @@ def show(
             record.final_response.run_id,
             usage,
         )
+
+
+@app.command()
+def ui() -> None:
+    """Launch the Zeus Web UI."""
+    import subprocess
+    import sys
+    
+    package_dir = Path(__file__).parent
+    ui_path = package_dir / "ui.py"
+    
+    if not ui_path.exists():
+        console.print(f"[red]Error: UI file not found at {ui_path}[/red]")
+        raise typer.Exit(1)
+        
+    console.print(f"Starting Zeus UI from {ui_path}...")
+    console.print("Press Ctrl+C to stop.")
+    try:
+        subprocess.run([sys.executable, "-m", "streamlit", "run", str(ui_path)])
+    except KeyboardInterrupt:
+        console.print("\nStopped Zeus UI.")
 
 
 @app.callback()
