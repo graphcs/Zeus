@@ -3,7 +3,7 @@ import streamlit as st
 import asyncio
 from pathlib import Path
 import sys
-from zeus.core.run_controller import run_zeus, BudgetConfig
+from zeus.core.run_controller import run_zeus
 from zeus.core.persistence import Persistence
 import pypdf
 import docx
@@ -17,6 +17,15 @@ st.set_page_config(
 )
 
 st.title("Zeus - Design Team Agent")
+with st.sidebar:  
+    st.toggle("Advanced Budget Settings", key="show_budget")
+    if st.session_state.get("show_budget"):
+        max_llm_calls = st.number_input("Max LLM Calls", value=6, min_value=1)
+        total_timeout = st.number_input("Total Timeout (s)", value=300, min_value=60)
+    else:
+        max_llm_calls = None
+        total_timeout = None
+
 
 
 def get_persistence():
@@ -77,6 +86,8 @@ def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
             context=combined_context,
             model=None,
             on_progress=on_progress,
+            max_llm_calls=max_llm_calls,
+            total_run_timeout=total_timeout
         )
 
     try:
