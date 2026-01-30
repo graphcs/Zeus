@@ -1,4 +1,4 @@
-"""Assembler - Final output assembly."""
+"""Assembler - Final output assembly with V1 evaluation signals."""
 
 from zeus.models.schemas import (
     Candidate,
@@ -7,6 +7,7 @@ from zeus.models.schemas import (
     RunRecord,
     UsageStats,
 )
+from zeus.core.evaluator import EvaluationEngine, TradeoffExtractor
 
 # Pricing per 1M tokens (USD) - Claude Sonnet 4 via OpenRouter
 MODEL_PRICING = {
@@ -17,7 +18,19 @@ MODEL_PRICING = {
 
 
 class Assembler:
-    """Assembles final output from candidates and critiques."""
+    """Assembles final output from candidates and critiques with V1 evaluation signals.
+    
+    V1 Features:
+    - Confidence scoring (low/medium/high)
+    - Coverage metrics (0.0-1.0)
+    - Tradeoff extraction
+    - Enhanced evaluation summary
+    """
+    
+    def __init__(self):
+        """Initialize assembler with evaluation engine."""
+        self.evaluation_engine = EvaluationEngine()
+        self.tradeoff_extractor = TradeoffExtractor()
 
     def _calculate_usage(self, record: RunRecord) -> UsageStats:
         """Calculate usage statistics including cost.
@@ -50,20 +63,22 @@ class Assembler:
         )
 
     def assemble(self, record: RunRecord) -> ZeusResponse:
-        """Assemble the final response from a run record.
+        """Assemble the final response from a run record with V1 evaluation.
 
         Args:
             record: The complete run record.
 
         Returns:
-            The final ZeusResponse.
+            The final ZeusResponse with V1 fields populated.
 
         Invariants enforced:
         - assumptions[] is always present (may be empty)
         - known_issues[] is always present (may be empty)
+        - confidence, coverage_score, and tradeoffs computed (V1)
         """
         # Use the latest candidate (v2 if exists, else v1)
         final_candidate = record.candidate_v2 or record.candidate_v1
+        final_critique = record.critique_v2 or record.critique_v1
 
         # Calculate usage stats
         usage = self._calculate_usage(record)
@@ -76,7 +91,16 @@ class Assembler:
                 known_issues=record.errors or ["Generation failed"],
                 run_id=record.run_id,
                 usage=usage,
+                confidence="low",  # V1: Low confidence on failure
+                coverage_score=0.0,  # V1: No coverage
+                tradeoffs=[],  # V1: No tradeoffs
             )
+
+        # V1: Generate evaluation summary
+        eval_summary = self.evaluation_engine.evaluate(record)
+        
+        # V1: Extract tradeoffs
+        tradeoffs = self.tradeoff_extractor.extract(final_candidate, final_critique)
 
         # Collect known issues from critique
         known_issues = self._collect_known_issues(record)
@@ -95,6 +119,11 @@ class Assembler:
             known_issues=known_issues,
             run_id=record.run_id,
             usage=usage,
+            # V1 fields
+            confidence=eval_summary.confidence,
+            coverage_score=eval_summary.coverage_score,
+            tradeoffs=tradeoffs,
+            evaluation_summary=eval_summary.model_dump(),  # Include complete evaluation summary
         )
 
     def _format_output(self, candidate: Candidate, record: RunRecord) -> str:

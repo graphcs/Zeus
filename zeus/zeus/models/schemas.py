@@ -54,6 +54,10 @@ class CritiqueIssue(BaseModel):
     """A single issue identified during critique."""
     role: str = Field(..., description="Critique perspective, e.g., 'completeness', 'architecture'")
     severity: Literal["blocker", "major", "minor"] = Field(..., description="Issue severity")
+    category: str = Field(
+        default="general",
+        description="Issue category: correctness, completeness, constraint_violation, clarity, uncertainty, safety, feasibility"
+    )
     description: str = Field(..., description="Issue description")
     suggested_fix: str | None = Field(default=None, description="Suggested fix if available")
 
@@ -77,6 +81,19 @@ class Plan(BaseModel):
     steps: list[PlanStep] = Field(default_factory=list)
 
 
+class EvaluationSummary(BaseModel):
+    """V1 evaluation summary for a run."""
+    confidence: Literal["low", "medium", "high"] = Field(..., description="Overall confidence level")
+    coverage_score: float = Field(..., ge=0.0, le=1.0, description="Perspective coverage (0.0-1.0)")
+    total_issues: int = Field(default=0, description="Total critique issues")
+    blockers: int = Field(default=0, description="Blocker-level issues")
+    majors: int = Field(default=0, description="Major-level issues")
+    minors: int = Field(default=0, description="Minor-level issues")
+    missing_perspectives: list[str] = Field(default_factory=list, description="Missing critique perspectives")
+    covered_perspectives: list[str] = Field(default_factory=list, description="Covered critique perspectives")
+    issues_by_category: dict[str, int] = Field(default_factory=dict, description="Issue count by category")
+
+
 # ============================================================================
 # Output Models
 # ============================================================================
@@ -97,6 +114,26 @@ class ZeusResponse(BaseModel):
     known_issues: list[str] = Field(default_factory=list, description="Known issues (always present)")
     run_id: str = Field(..., description="Unique run identifier")
     usage: UsageStats = Field(default_factory=UsageStats, description="Token usage and cost")
+    
+    # V1 Evaluation Signals
+    confidence: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Confidence level in the solution based on critique severity and coverage"
+    )
+    coverage_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Perspective coverage score (0.0-1.0)"
+    )
+    tradeoffs: list[str] = Field(
+        default_factory=list,
+        description="Explicit tradeoffs made in the design"
+    )
+    evaluation_summary: dict | None = Field(
+        default=None,
+        description="Complete V1 evaluation summary with detailed metrics"
+    )
 
 
 # ============================================================================
