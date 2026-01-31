@@ -14,6 +14,7 @@ from rich.markdown import Markdown
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
 from src.models.schemas import UsageStats
+from src.utils.read_file import read_file_content as read_file_utils
 
 app = typer.Typer(
     name="zeus",
@@ -154,42 +155,12 @@ def print_response(
 
 
 def read_file_content(file_path: Path) -> str:
-    """Read content from a file based on its extension."""
-    suffix = file_path.suffix.lower()
-
-    if not file_path.exists():
+    """Read content from a file using utils."""
+    try:
+        return read_file_utils(file_path)
+    except FileNotFoundError:
         console.print(f"[yellow]Warning: File not found: {file_path}[/yellow]")
         return ""
-
-    try:
-        if suffix == ".pdf":
-            try:
-                import pypdf
-            except ImportError:
-                console.print(f"[red]Error reading {file_path}: pypdf not installed.[/red]")
-                return ""
-                
-            reader = pypdf.PdfReader(file_path)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-            return f"--- File: {file_path.name} ---\n{text}\n"
-
-        elif suffix in [".docx", ".doc"]:
-            try:
-                import docx
-            except ImportError:
-                console.print(f"[red]Error reading {file_path}: python-docx not installed.[/red]")
-                return ""
-            
-            doc = docx.Document(file_path)
-            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-            return f"--- File: {file_path.name} ---\n{text}\n"
-
-        else:
-            # Assume text for everything else (md, txt, etc)
-            return f"--- File: {file_path.name} ---\n{file_path.read_text(encoding='utf-8')}\n"
-
     except Exception as e:
         console.print(f"[red]Error reading file {file_path}: {e}[/red]")
         return ""

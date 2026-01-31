@@ -4,8 +4,7 @@ from src.core.persistence import Persistence
 from dotenv import load_dotenv
 import streamlit as st
 import asyncio
-import pypdf
-import docx
+from src.utils.read_file import read_file_content
 
 
 
@@ -216,31 +215,13 @@ def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
             # uploaded_file is a BytesIO-like object with a .name attribute
             try:
                 name = uploaded_file.name
-                lower_name = name.lower()
-                
-                if lower_name.endswith(".pdf"):
-                    reader = pypdf.PdfReader(uploaded_file)
-                    text = ""
-                    for page in reader.pages:
-                        extracted = page.extract_text()
-                        if extracted:
-                            text += extracted + "\n"
-                    context_parts.append(f"--- File: {name} ---\n{text}\n")
-                    
-                elif lower_name.endswith((".docx", ".doc")):
-                    doc = docx.Document(uploaded_file)
-                    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-                    context_parts.append(f"--- File: {name} ---\n{text}\n")
-                    
-                else:
-                    # Text based (md, txt, etc) using utf-8
-                    stringio = uploaded_file.getvalue().decode("utf-8")
-                    context_parts.append(f"--- File: {name} ---\n{stringio}\n")
+                content = read_file_content(uploaded_file, filename=name)
+                context_parts.append(content)
                     
             except ImportError as e:
                 st.error(f"Missing dependency for {uploaded_file.name}: {e}")
             except Exception as e:
-                st.error(f"Error processing file {uploaded_file.name}: {e}")
+                st.error(str(e))
 
     combined_context = "\n\n".join(context_parts) if context_parts else None
     
