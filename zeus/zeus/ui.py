@@ -1,13 +1,9 @@
-
-import streamlit as st
-import asyncio
-from pathlib import Path
-import sys
 from zeus.core.run_controller import run_zeus
 from zeus.core.persistence import Persistence
+import streamlit as st
+import asyncio
 import pypdf
 import docx
-import pandas as pd
 
 
 
@@ -120,6 +116,90 @@ def format_evaluation_summary(response) -> str:
     
     return "".join(lines)
 
+def display_response(response):
+    """Display response similar to CLI output."""
+    # 1. Output
+    st.markdown(response.output)
+    
+    # 2. Evaluation Summary
+    # Check if we have evaluation data
+    has_eval = response.confidence or response.coverage_score is not None or getattr(response, 'evaluation_summary', None)
+    
+    if has_eval:
+        st.markdown("### 🎯 V1 Evaluation")
+        with st.container(border=True):
+            cols = st.columns(2)
+            # Confidence
+            if response.confidence:
+                conf_colors = {"low": "🔴", "medium": "🟡", "high": "🟢"}
+                conf_emoji = conf_colors.get(response.confidence, "⚪")
+                cols[0].markdown(f"**Confidence:** {conf_emoji} {response.confidence.upper()}")
+            
+            # Coverage
+            if response.coverage_score is not None:
+                coverage_pct = int(response.coverage_score * 100)
+                # Color logic from CLI
+                if coverage_pct >= 83: cov_color = "🟢"
+                elif coverage_pct >= 50: cov_color = "🟡"
+                else: cov_color = "🔴"
+                cols[1].markdown(f"**Coverage:** {cov_color} **{coverage_pct}%** ({int(response.coverage_score * 6)}/6 perspectives)")
+            
+            # Issue Breakdown
+            if hasattr(response, 'evaluation_summary') and response.evaluation_summary:
+                eval_sum = response.evaluation_summary
+                st.markdown("---")
+                st.markdown("**Issue Breakdown:**")
+                
+                blockers = eval_sum.get('blockers', 0)
+                majors = eval_sum.get('majors', 0)
+                minors = eval_sum.get('minors', 0)
+                total = eval_sum.get('total_issues', 0)
+
+                i_cols = st.columns(3)
+                i_cols[0].markdown(f"🚫 **Blockers:** {blockers}")
+                i_cols[1].markdown(f"⚠️ **Majors:** {majors}")
+                i_cols[2].markdown(f"ℹ️ **Minors:** {minors}")
+                
+                if total == 0:
+                    st.markdown("✨ No issues found")
+                
+                missing = eval_sum.get('missing_perspectives', [])
+                if missing:
+                    st.warning(f"Missing Perspectives: {', '.join(missing)}")
+
+    # 3. Tradeoffs
+    if response.tradeoffs:
+        st.markdown("### ⚖️ Design Tradeoffs")
+        with st.container(border=True):
+            for t in response.tradeoffs:
+                st.markdown(f"• {t}")
+
+    # 4. Assumptions
+    if response.assumptions:
+         st.markdown("### 📋 Assumptions")
+         with st.container(border=True):
+            for a in response.assumptions:
+                st.markdown(f"• {a}")
+
+    # 5. Known Issues
+    if response.known_issues:
+         st.markdown("### ⚠️ Known Issues")
+         with st.container(border=True):
+            for i in response.known_issues:
+                st.markdown(f"• {i}")
+
+    # 6. Usage
+    if response.usage:
+        st.markdown("### 📊 Usage")
+        with st.container(border=True):
+            u = response.usage
+            st.text(f"LLM Calls: {u.llm_calls}")
+            st.text(f"Tokens: {u.tokens_in:,} in / {u.tokens_out:,} out ({u.total_tokens:,} total)")
+            st.text(f"Cost: ${u.cost_usd:.4f}")
+
+    # 7. Run ID
+    st.caption(f"Run ID: {response.run_id}")
+
 def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
     
     # Process file uploads
@@ -224,82 +304,8 @@ with tab1:
                 mime="text/markdown"
             )
             
-            # V1: Evaluation Summary
-            eval_col1, eval_col2 = st.columns(2)
-            with eval_col1:
-                # Confidence badge
-                conf_colors = {"low": "🔴", "medium": "🟡", "high": "🟢"}
-                conf_emoji = conf_colors.get(response.confidence, "⚪")
-                st.metric("Confidence", f"{conf_emoji} {response.confidence.upper()}")
-            with eval_col2:
-                # Coverage score
-                coverage_pct = int(response.coverage_score * 100)
-                st.metric("Critique Coverage", f"{coverage_pct}%", 
-                         f"{int(response.coverage_score * 6)}/6 perspectives")
-            
-            # Additional evaluation details
-            if hasattr(response, 'evaluation_summary') and response.evaluation_summary:
-                eval_sum = response.evaluation_summary
-                st.markdown("#### 📊 Detailed Evaluation")
-                
-                issue_col1, issue_col2, issue_col3, issue_col4 = st.columns(4)
-                with issue_col1:
-                    st.metric("🚫 Blockers", eval_sum.get('blockers', 0))
-                with issue_col2:
-                    st.metric("⚠️ Majors", eval_sum.get('majors', 0))
-                with issue_col3:
-                    st.metric("ℹ️ Minors", eval_sum.get('minors', 0))
-                with issue_col4:
-                    st.metric("Total Issues", eval_sum.get('total_issues', 0))
-                
-                # Missing perspectives
-                missing = eval_sum.get('missing_perspectives', [])
-                if missing:
-                    st.warning(f"Missing Perspectives: {', '.join(missing)}")
-                
-                # Issues by category
-                issues_by_cat = eval_sum.get('issues_by_category', {})
-                if issues_by_cat:
-                    st.markdown("**Issues by Category:**")
-                    cat_cols = st.columns(len(issues_by_cat) if len(issues_by_cat) <= 4 else 4)
-                    for idx, (cat, count) in enumerate(issues_by_cat.items()):
-                        with cat_cols[idx % 4]:
-                            st.metric(cat.replace('_', ' ').title(), count)
-            
-            st.markdown("### Output")
-            st.markdown(response.output)
             st.divider()
-            
-            # V1: Tradeoffs section
-            if response.tradeoffs:
-                with st.expander("⚖️ Design Tradeoffs", expanded=True):
-                    for t in response.tradeoffs:
-                        st.write(f"• {t}")
-            
-            with st.expander("Assumptions & Issues", expanded=True):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.subheader("📋 Assumptions")
-                    if response.assumptions:
-                        for a in response.assumptions:
-                            st.write(f"• {a}")
-                    else:
-                        st.write("No assumptions made.")
-                        
-                with col_b:
-                    st.subheader("⚠️ Known Issues")
-                    if response.known_issues:
-                        for i in response.known_issues:
-                            st.write(f"• {i}")
-                    else:
-                        st.write("No known issues.")
-            
-            with st.expander("Usage Stats"):
-                u = response.usage
-                st.write(f"**LLM Calls:** {u.llm_calls}")
-                st.write(f"**Tokens:** {u.tokens_in:,} in / {u.tokens_out:,} out ({u.total_tokens:,} total)")
-                st.write(f"**Cost:** ${u.cost_usd:.4f}")
-                st.caption(f"Run ID: {response.run_id}")
+            display_response(response)
 
 with tab2:
     st.header("Generate Target Solution")
@@ -341,82 +347,8 @@ with tab2:
             mime="text/markdown"
         )
         
-        # V1: Evaluation Summary
-        eval_col1, eval_col2 = st.columns(2)
-        with eval_col1:
-            # Confidence badge
-            conf_colors = {"low": "🔴", "medium": "🟡", "high": "🟢"}
-            conf_emoji = conf_colors.get(response.confidence, "⚪")
-            st.metric("Confidence", f"{conf_emoji} {response.confidence.upper()}")
-        with eval_col2:
-            # Coverage score
-            coverage_pct = int(response.coverage_score * 100)
-            st.metric("Critique Coverage", f"{coverage_pct}%", 
-                     f"{int(response.coverage_score * 6)}/6 perspectives")
-        
-        # Additional evaluation details
-        if hasattr(response, 'evaluation_summary') and response.evaluation_summary:
-            eval_sum = response.evaluation_summary
-            st.markdown("####  Detailed Evaluation")
-            
-            issue_col1, issue_col2, issue_col3, issue_col4 = st.columns(4)
-            with issue_col1:
-                st.metric("🚫 Blockers", eval_sum.get('blockers', 0))
-            with issue_col2:
-                st.metric("⚠️ Majors", eval_sum.get('majors', 0))
-            with issue_col3:
-                st.metric("ℹ️ Minors", eval_sum.get('minors', 0))
-            with issue_col4:
-                st.metric("Total Issues", eval_sum.get('total_issues', 0))
-            
-            # Missing perspectives
-            missing = eval_sum.get('missing_perspectives', [])
-            if missing:
-                st.warning(f"Missing Perspectives: {', '.join(missing)}")
-            
-            # Issues by category
-            issues_by_cat = eval_sum.get('issues_by_category', {})
-            if issues_by_cat:
-                st.markdown("**Issues by Category:**")
-                cat_cols = st.columns(len(issues_by_cat) if len(issues_by_cat) <= 4 else 4)
-                for idx, (cat, count) in enumerate(issues_by_cat.items()):
-                    with cat_cols[idx % 4]:
-                        st.metric(cat.replace('_', ' ').title(), count)
-        
-        st.markdown("### Output")
-        st.markdown(response.output)
         st.divider()
-        
-        # V1: Tradeoffs section
-        if response.tradeoffs:
-            with st.expander("Design Tradeoffs", expanded=True):
-                for t in response.tradeoffs:
-                    st.write(f"• {t}")
-        
-        with st.expander("Assumptions & Issues", expanded=True):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.subheader("📋 Assumptions")
-                if response.assumptions:
-                    for a in response.assumptions:
-                        st.write(f"• {a}")
-                else:
-                    st.write("No assumptions made.")
-                    
-            with col_b:
-                st.subheader("⚠️ Known Issues")
-                if response.known_issues:
-                    for i in response.known_issues:
-                        st.write(f"• {i}")
-                else:
-                    st.write("No known issues.")
-        
-        with st.expander("Usage Stats"):
-            u = response.usage
-            st.write(f"**LLM Calls:** {u.llm_calls}")
-            st.write(f"**Tokens:** {u.tokens_in:,} in / {u.tokens_out:,} out ({u.total_tokens:,} total)")
-            st.write(f"**Cost:** ${u.cost_usd:.4f}")
-            st.caption(f"Run ID: {response.run_id}")
+        display_response(response)
 
 with tab3:
     st.header("Recent Runs")
@@ -449,7 +381,7 @@ with tab3:
                         record = persistence.load(run['run_id'])
                         if record and record.final_response:
                             st.markdown("---")
-                            st.markdown(record.final_response.output)
+                            display_response(record.final_response)
                         else:
                             st.warning("No output available for this run.")
     except Exception as e:
