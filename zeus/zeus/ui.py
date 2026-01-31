@@ -3,6 +3,11 @@ import streamlit as st
 import asyncio
 from pathlib import Path
 import sys
+from dotenv import load_dotenv
+
+# Load .env file so OPENROUTER_API_KEY is available
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 from zeus.core.run_controller import run_zeus
 from zeus.core.persistence import Persistence
 import pypdf
