@@ -4,17 +4,19 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import Optional
-
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
-
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
 from src.models.schemas import UsageStats
 from src.utils.read_file import read_file_content as read_file_utils
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv()
 
 app = typer.Typer(
     name="zeus",

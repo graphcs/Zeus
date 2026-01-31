@@ -5,10 +5,7 @@ from dotenv import load_dotenv
 import streamlit as st
 import asyncio
 from src.utils.read_file import read_file_content
-
-
-
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv()
 
 
 st.set_page_config(

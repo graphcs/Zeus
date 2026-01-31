@@ -54,7 +54,8 @@ htmlcov/
 *.zip
 
 # Run records (keep directory but ignore contents)
-zeus/run_records/*.json
+run_records/
+
 
 # Claude Code
 CLAUDE.md
