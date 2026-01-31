@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime
-from zeus.models.schemas import RunRecord
+from src.models.schemas import RunRecord
 
 
 class Persistence:

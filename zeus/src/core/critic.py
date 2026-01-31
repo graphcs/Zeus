@@ -1,10 +1,10 @@
 """Critic - Multi-view critique of candidates."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Candidate, Critique, CritiqueIssue
-from zeus.llm.openrouter import OpenRouterClient
-from zeus.prompts.design_brief import DesignBriefPrompts
-from zeus.prompts.solution_designer import SolutionDesignerPrompts
+from src.models.schemas import NormalizedProblem, Candidate, Critique, CritiqueIssue
+from src.llm.openrouter import OpenRouterClient
+from src.prompts.design_brief import DesignBriefPrompts
+from src.prompts.solution_designer import SolutionDesignerPrompts
 
 
 # Required perspectives for critique coverage (MVP spec)

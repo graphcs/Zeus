@@ -1,10 +1,10 @@
 """Planner - Creates linear plans for generation tasks."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Plan, PlanStep
-from zeus.llm.openrouter import OpenRouterClient
-from zeus.prompts.design_brief import DesignBriefPrompts
-from zeus.prompts.solution_designer import SolutionDesignerPrompts
+from src.models.schemas import NormalizedProblem, Plan, PlanStep
+from src.llm.openrouter import OpenRouterClient
+from src.prompts.design_brief import DesignBriefPrompts
+from src.prompts.solution_designer import SolutionDesignerPrompts
 
 
 class Planner:

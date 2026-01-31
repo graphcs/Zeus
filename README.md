@@ -39,7 +39,7 @@ export OPENROUTER_API_KEY="your-api-key"
 ## Usage
 
 ```bash
-uv run streamlit zeus/ui.py
+uv run streamlit src/ui.py
 ``` 
 
 ---
@@ -75,7 +75,7 @@ Normalize → Plan → Generate v1 → Critique v1 → [Revise → Critique v2] 
 
 ```
 zeus/
-├── zeus/
+├── src/
 │   ├── cli.py   # Command Line Interface
 |   ├── ui.py    # Streamlit UI            
 │   ├── core/

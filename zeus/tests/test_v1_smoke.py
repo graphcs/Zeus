@@ -16,8 +16,8 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from zeus.core.run_controller import run_zeus
-from zeus.models.schemas import ZeusResponse
+from src.core.run_controller import run_zeus
+from src.models.schemas import ZeusResponse
 
 
 async def test_v1_response_fields():
@@ -126,12 +126,12 @@ async def test_v1_evaluator_import():
     print("-" * 50)
     
     try:
-        from zeus.core.evaluator import (
+        from src.core.evaluator import (
             ConfidenceEvaluator,
             TradeoffExtractor,
             EvaluationEngine,
         )
-        from zeus.models.schemas import EvaluationSummary
+        from src.models.schemas import EvaluationSummary
         
         print("✅ All evaluator classes import successfully")
         print("   - ConfidenceEvaluator")
@@ -150,7 +150,7 @@ async def test_v1_schema_validation():
     print("\n🧪 Test 6: Schema Validation")
     print("-" * 50)
     
-    from zeus.models.schemas import (
+    from src.models.schemas import (
         ZeusResponse,
         CritiqueIssue,
         EvaluationSummary,

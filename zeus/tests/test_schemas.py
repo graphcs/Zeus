@@ -1,7 +1,7 @@
 """Tests for Zeus data schemas."""
 
 import pytest
-from zeus.models.schemas import (
+from src.models.schemas import (
     ZeusRequest,
     ZeusResponse,
     NormalizedProblem,

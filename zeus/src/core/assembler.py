@@ -1,13 +1,13 @@
 """Assembler - Final output assembly with V1 evaluation signals."""
 
-from zeus.models.schemas import (
+from src.models.schemas import (
     Candidate,
     Critique,
     ZeusResponse,
     RunRecord,
     UsageStats,
 )
-from zeus.core.evaluator import EvaluationEngine, TradeoffExtractor
+from src.core.evaluator import EvaluationEngine, TradeoffExtractor
 
 # Pricing per 1M tokens (USD) - Claude Sonnet 4 via OpenRouter
 MODEL_PRICING = {

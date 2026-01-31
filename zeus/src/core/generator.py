@@ -1,10 +1,10 @@
 """Generator - LLM-based generation of candidates."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Plan, Candidate, Critique
-from zeus.llm.openrouter import OpenRouterClient
-from zeus.prompts.design_brief import DesignBriefPrompts
-from zeus.prompts.solution_designer import SolutionDesignerPrompts
+from src.models.schemas import NormalizedProblem, Plan, Candidate, Critique
+from src.llm.openrouter import OpenRouterClient
+from src.prompts.design_brief import DesignBriefPrompts
+from src.prompts.solution_designer import SolutionDesignerPrompts
 
 
 class Generator:

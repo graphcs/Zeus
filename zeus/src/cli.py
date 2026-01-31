@@ -11,9 +11,9 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 
-from zeus.core.run_controller import run_zeus
-from zeus.core.persistence import Persistence
-from zeus.models.schemas import UsageStats
+from src.core.run_controller import run_zeus
+from src.core.persistence import Persistence
+from src.models.schemas import UsageStats
 
 app = typer.Typer(
     name="zeus",

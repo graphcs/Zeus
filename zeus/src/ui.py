@@ -1,6 +1,6 @@
 from pathlib import Path
-from zeus.core.run_controller import run_zeus
-from zeus.core.persistence import Persistence
+from src.core.run_controller import run_zeus
+from src.core.persistence import Persistence
 from dotenv import load_dotenv
 import streamlit as st
 import asyncio

@@ -1,7 +1,7 @@
 """Evaluator - V1 evaluation signals and metrics computation."""
 
 from typing import Literal
-from zeus.models.schemas import (
+from src.models.schemas import (
     Candidate,
     Critique,
     CritiqueIssue,
@@ -229,7 +229,7 @@ class EvaluationEngine:
     
     def _compute_coverage(self, critique: Critique) -> float:
         """Compute perspective coverage score (0.0-1.0)."""
-        from zeus.core.critic import REQUIRED_PERSPECTIVES
+        from src.core.critic import REQUIRED_PERSPECTIVES
         
         covered = set()
         for issue in critique.issues:
@@ -244,7 +244,7 @@ class EvaluationEngine:
     
     def _analyze_perspectives(self, critique: Critique) -> tuple[set[str], set[str]]:
         """Analyze which perspectives are covered vs missing."""
-        from zeus.core.critic import REQUIRED_PERSPECTIVES
+        from src.core.critic import REQUIRED_PERSPECTIVES
         
         covered = set()
         for issue in critique.issues:

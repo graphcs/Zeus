@@ -1,6 +1,6 @@
 """Data models for Zeus."""
 
-from zeus.models.schemas import (
+from src.models.schemas import (
     ZeusRequest,
     ZeusResponse,
     NormalizedProblem,

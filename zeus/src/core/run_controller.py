@@ -3,22 +3,22 @@
 import asyncio
 import time
 from typing import Callable
-from zeus.models.schemas import (
+from src.models.schemas import (
     ZeusRequest,
     ZeusResponse,
     RunRecord,
     BudgetUsed,
     BudgetConfig,
 )
-from zeus.llm.openrouter import OpenRouterClient, OpenRouterError, OpenRouterTimeoutError
-from zeus.core.normalizer import Normalizer
-from zeus.core.planner import Planner
-from zeus.core.generator import Generator
-from zeus.core.critic import Critic
-from zeus.core.assembler import Assembler
-from zeus.core.persistence import Persistence
-from zeus.prompts.design_brief import DesignBriefPrompts
-from zeus.prompts.solution_designer import SolutionDesignerPrompts
+from src.llm.openrouter import OpenRouterClient, OpenRouterError, OpenRouterTimeoutError
+from src.core.normalizer import Normalizer
+from src.core.planner import Planner
+from src.core.generator import Generator
+from src.core.critic import Critic
+from src.core.assembler import Assembler
+from src.core.persistence import Persistence
+from src.prompts.design_brief import DesignBriefPrompts
+from src.prompts.solution_designer import SolutionDesignerPrompts
 
 
 class BudgetExceededError(Exception):
