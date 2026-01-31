@@ -28,7 +28,7 @@ dev = [
 ]
 
 [project.scripts]
-zeus = "zeus.cli:app"
+zeus = "src.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
