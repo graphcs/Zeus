@@ -262,10 +262,9 @@ def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
         )
 
     try:
-        with st.spinner("Zeus is thinking..."):
-            response = asyncio.run(_run())
-            status_container.empty()
-            return response
+        response = asyncio.run(_run())
+        status_container.empty()
+        return response
     except Exception as e:
         status_container.error(f"Error: {e}")
         return None
