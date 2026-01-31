@@ -1,11 +1,15 @@
+from pathlib import Path
 from zeus.core.run_controller import run_zeus
 from zeus.core.persistence import Persistence
+from dotenv import load_dotenv
 import streamlit as st
 import asyncio
 import pypdf
 import docx
 
 
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 
 st.set_page_config(
