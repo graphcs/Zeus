@@ -92,12 +92,13 @@ Generate the Target Solution in Markdown format with these sections:
 6. **Security Considerations** - Security measures and threat mitigations
 7. **Scalability & Performance** - How the solution handles growth
 8. **Error Handling** - Failure modes and recovery strategies
-9. **Testing Strategy** - How to verify the solution works
-10. **Implementation Notes** - Guidance for builders
-11. **Constraints Compliance** - How each constraint is satisfied
-12. **Assumptions** - What was assumed
-13. **Risks & Mitigations** - Identified risks and proposed mitigations
-14. **Open Questions** - Unresolved items needing decisions
+9. **Design Tradeoffs** - Explicit tradeoffs made (e.g., "Chose consistency over availability because...")
+10. **Testing Strategy** - How to verify the solution works
+11. **Implementation Notes** - Guidance for builders
+12. **Constraints Compliance** - How each constraint is satisfied
+13. **Assumptions** - What was assumed
+14. **Risks & Mitigations** - Identified risks and proposed mitigations
+15. **Open Questions** - Unresolved items needing decisions
 
 Return structured metadata:
 {{
@@ -162,6 +163,7 @@ Return a JSON object:
         {{
             "role": "scope|architecture|risk|security|compliance|evaluation",
             "severity": "blocker|major|minor",
+            "category": "correctness|completeness|constraint_violation|clarity|uncertainty|safety|feasibility|general",
             "description": "What the issue is",
             "suggested_fix": "How to fix it (or null)"
         }}
@@ -169,6 +171,16 @@ Return a JSON object:
     "constraint_violations": ["List any constraints not satisfied"],
     "missing_perspectives": ["Any perspectives beyond the 6 that were not considered"]
 }}
+
+Categories:
+- correctness: Logical errors or incorrect implementations
+- completeness: Missing requirements or incomplete coverage
+- constraint_violation: Violations of stated constraints
+- clarity: Unclear or ambiguous content
+- uncertainty: Areas needing clarification
+- safety: Safety or security concerns
+- feasibility: Implementation or operational feasibility issues
+- general: General observations
 
 IMPORTANT: You must provide at least one issue or observation from EACH of the 6 perspectives, even if it's just to note that the perspective was adequately addressed (as a "minor" observation).
 

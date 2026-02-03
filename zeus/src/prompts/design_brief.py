@@ -82,9 +82,10 @@ Generate the Design Brief in Markdown format with these sections:
 4. **Scope** - What's in scope and explicitly out of scope
 5. **Requirements** - Functional and non-functional requirements
 6. **Constraints** - All constraints (MUST include all user-provided constraints)
-7. **Assumptions** - What you assumed when information was unclear
-8. **Success Criteria** - How to measure if the solution meets the brief
-9. **Open Questions** - Areas needing clarification
+7. **Design Tradeoffs** - Explicit tradeoffs made (e.g., "Prioritized X over Y because...")
+8. **Assumptions** - What you assumed when information was unclear
+9. **Success Criteria** - How to measure if the solution meets the brief
+10. **Open Questions** - Areas needing clarification
 
 Also return structured metadata:
 {{
@@ -146,6 +147,7 @@ Return a JSON object:
         {{
             "role": "scope|architecture|risk|security|compliance|evaluation",
             "severity": "blocker|major|minor",
+            "category": "correctness|completeness|constraint_violation|clarity|uncertainty|safety|feasibility|general",
             "description": "What the issue is",
             "suggested_fix": "How to fix it (or null)"
         }}
@@ -153,6 +155,16 @@ Return a JSON object:
     "constraint_violations": ["List any user constraints not reflected in the brief"],
     "missing_perspectives": ["Any perspectives beyond the 6 that were not considered"]
 }}
+
+Categories:
+- correctness: Logical errors or incorrect implementations
+- completeness: Missing requirements or incomplete coverage
+- constraint_violation: Violations of stated constraints
+- clarity: Unclear or ambiguous content
+- uncertainty: Areas needing clarification
+- safety: Safety or security concerns
+- feasibility: Implementation or operational feasibility issues
+- general: General observations
 
 IMPORTANT: You must provide at least one issue or observation from EACH of the 6 perspectives, even if it's just to note that the perspective was adequately addressed (as a "minor" observation).
 

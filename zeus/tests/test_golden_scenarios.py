@@ -17,8 +17,8 @@ Or run specific scenarios:
 
 import os
 import pytest
-from zeus.core.run_controller import run_zeus
-from zeus.models.schemas import ZeusResponse
+from src.core.run_controller import run_zeus
+from src.models.schemas import ZeusResponse
 
 
 # Skip all tests if no API key is available

@@ -11,9 +11,10 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 
-from zeus.core.run_controller import run_zeus
-from zeus.core.persistence import Persistence
-from zeus.models.schemas import UsageStats
+from src.core.run_controller import run_zeus
+from src.core.persistence import Persistence
+from src.models.schemas import UsageStats
+from src.utils.read_file import read_file_content as read_file_utils
 
 app = typer.Typer(
     name="zeus",
@@ -29,10 +30,93 @@ def print_response(
     known_issues: list[str],
     run_id: str,
     usage: UsageStats | None = None,
+    confidence: str | None = None,
+    coverage_score: float | None = None,
+    tradeoffs: list[str] | None = None,
+    evaluation_summary: dict | None = None,
 ) -> None:
-    """Print the Zeus response in a formatted way."""
+    """Print the Zeus response in a formatted way with V1 evaluation signals.
+    
+    Args:
+        output: Main output content
+        assumptions: List of assumptions
+        known_issues: List of known issues
+        run_id: Run identifier
+        usage: Optional usage statistics
+        confidence: V1 confidence level (low/medium/high)
+        coverage_score: V1 coverage score (0.0-1.0)
+        tradeoffs: V1 design tradeoffs
+        evaluation_summary: V1 complete evaluation summary
+    """
     # Main output
     console.print(Markdown(output))
+
+    # V1: Evaluation Summary Panel
+    if confidence or coverage_score is not None or evaluation_summary:
+        console.print()
+        
+        # Build evaluation summary
+        eval_lines = []
+        
+        if confidence:
+            # Color-code confidence
+            conf_colors = {"low": "red", "medium": "yellow", "high": "green"}
+            conf_color = conf_colors.get(confidence, "white")
+            conf_emoji = {"low": "🔴", "medium": "🟡", "high": "🟢"}
+            emoji = conf_emoji.get(confidence, "⚪")
+            eval_lines.append(f"{emoji} Confidence: [{conf_color}]{confidence.upper()}[/{conf_color}]")
+        
+        if coverage_score is not None:
+            # Format coverage as percentage with color
+            coverage_pct = int(coverage_score * 100)
+            if coverage_pct >= 83:  # 5/6 or 6/6
+                cov_color = "green"
+            elif coverage_pct >= 50:  # 3/6 or 4/6
+                cov_color = "yellow"
+            else:
+                cov_color = "red"
+            eval_lines.append(f"📊 Coverage: [{cov_color}]{coverage_pct}%[/{cov_color}] ({int(coverage_score * 6)}/6 perspectives)")
+        
+        # Add detailed metrics if available
+        if evaluation_summary:
+            eval_lines.append("")
+            eval_lines.append("[bold]Issue Breakdown:[/bold]")
+            blockers = evaluation_summary.get('blockers', 0)
+            majors = evaluation_summary.get('majors', 0)
+            minors = evaluation_summary.get('minors', 0)
+            total = evaluation_summary.get('total_issues', 0)
+            
+            if blockers > 0:
+                eval_lines.append(f"  🚫 Blockers: [red]{blockers}[/red]")
+            if majors > 0:
+                eval_lines.append(f"  ⚠️  Majors: [yellow]{majors}[/yellow]")
+            if minors > 0:
+                eval_lines.append(f"  ℹ️  Minors: [blue]{minors}[/blue]")
+            
+            if total == 0:
+                eval_lines.append("  ✨ No issues found")
+            
+            # Show missing perspectives
+            missing = evaluation_summary.get('missing_perspectives', [])
+            if missing:
+                eval_lines.append("")
+                eval_lines.append(f"[yellow]Missing Perspectives:[/yellow] {', '.join(missing)}")
+        
+        if eval_lines:
+            console.print(Panel(
+                "\n".join(eval_lines),
+                title="🎯 V1 Evaluation",
+                border_style="cyan",
+            ))
+
+    # Tradeoffs (V1)
+    if tradeoffs:
+        console.print()
+        console.print(Panel(
+            "\n".join(f"• {t}" for t in tradeoffs),
+            title="⚖️ Design Tradeoffs",
+            border_style="magenta",
+        ))
 
     # Assumptions
     console.print()
@@ -71,42 +155,12 @@ def print_response(
 
 
 def read_file_content(file_path: Path) -> str:
-    """Read content from a file based on its extension."""
-    suffix = file_path.suffix.lower()
-
-    if not file_path.exists():
+    """Read content from a file using utils."""
+    try:
+        return read_file_utils(file_path)
+    except FileNotFoundError:
         console.print(f"[yellow]Warning: File not found: {file_path}[/yellow]")
         return ""
-
-    try:
-        if suffix == ".pdf":
-            try:
-                import pypdf
-            except ImportError:
-                console.print(f"[red]Error reading {file_path}: pypdf not installed.[/red]")
-                return ""
-                
-            reader = pypdf.PdfReader(file_path)
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-            return f"--- File: {file_path.name} ---\n{text}\n"
-
-        elif suffix in [".docx", ".doc"]:
-            try:
-                import docx
-            except ImportError:
-                console.print(f"[red]Error reading {file_path}: python-docx not installed.[/red]")
-                return ""
-            
-            doc = docx.Document(file_path)
-            text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-            return f"--- File: {file_path.name} ---\n{text}\n"
-
-        else:
-            # Assume text for everything else (md, txt, etc)
-            return f"--- File: {file_path.name} ---\n{file_path.read_text(encoding='utf-8')}\n"
-
     except Exception as e:
         console.print(f"[red]Error reading file {file_path}: {e}[/red]")
         return ""
@@ -186,7 +240,16 @@ def brief(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    print_response(response.output, response.assumptions, response.known_issues, response.run_id, response.usage)
+    print_response(
+        response.output,
+        response.assumptions,
+        response.known_issues,
+        response.run_id,
+        response.usage,
+        response.confidence,
+        response.coverage_score,
+        response.tradeoffs,
+    )
 
     if output_file:
         output_file.write_text(response.output)
@@ -268,7 +331,22 @@ def solution(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    print_response(response.output, response.assumptions, response.known_issues, response.run_id, response.usage)
+    # Get evaluation summary if available
+    eval_summary = None
+    if hasattr(response, 'evaluation_summary'):
+        eval_summary = response.evaluation_summary
+    
+    print_response(
+        response.output,
+        response.assumptions,
+        response.known_issues,
+        response.run_id,
+        response.usage,
+        response.confidence,
+        response.coverage_score,
+        response.tradeoffs,
+        eval_summary,
+    )
 
     if output_file:
         output_file.write_text(response.output)
@@ -329,14 +407,23 @@ def show(
 
     if record.final_response:
         console.print("\n[bold]Final Response:[/bold]")
-        # Get usage from final_response if available, otherwise None
+        # Get fields from final_response, with fallbacks for V1 fields
         usage = getattr(record.final_response, 'usage', None)
+        confidence = getattr(record.final_response, 'confidence', None)
+        coverage_score = getattr(record.final_response, 'coverage_score', None)
+        tradeoffs = getattr(record.final_response, 'tradeoffs', None)
+        eval_summary = getattr(record.final_response, 'evaluation_summary', None)
+        
         print_response(
             record.final_response.output,
             record.final_response.assumptions,
             record.final_response.known_issues,
             record.final_response.run_id,
             usage,
+            confidence,
+            coverage_score,
+            tradeoffs,
+            eval_summary,
         )
 
 

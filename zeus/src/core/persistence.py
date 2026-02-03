@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime
-from zeus.models.schemas import RunRecord
+from src.models.schemas import RunRecord
 
 
 class Persistence:
@@ -18,7 +18,36 @@ class Persistence:
         Args:
             base_dir: Directory for storing run records. Defaults to ./run_records/
         """
-        self.base_dir = Path(base_dir) if base_dir else Path(self.DEFAULT_DIR)
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            # Try to find run_records in current or parent directories
+            cwd = Path.cwd()
+            found = False
+            
+            # Check up to 4 levels up
+            current = cwd
+            for _ in range(5):
+                # Check if run_records exists here
+                check_path = current / self.DEFAULT_DIR
+                if check_path.exists() and check_path.is_dir():
+                    self.base_dir = check_path
+                    found = True
+                    break
+                
+                # Check for project root markers (pyproject.toml, .git) to anchor here
+                if (current / "pyproject.toml").exists() or (current / ".git").exists():
+                     self.base_dir = current / self.DEFAULT_DIR
+                     found = True
+                     break
+                
+                if current.parent == current: # Root
+                    break
+                current = current.parent
+            
+            if not found:
+                self.base_dir = Path(self.DEFAULT_DIR)
+
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:

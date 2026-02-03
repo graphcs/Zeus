@@ -1,10 +1,10 @@
 """Critic - Multi-view critique of candidates."""
 
 import json
-from zeus.models.schemas import NormalizedProblem, Candidate, Critique, CritiqueIssue
-from zeus.llm.openrouter import OpenRouterClient
-from zeus.prompts.design_brief import DesignBriefPrompts
-from zeus.prompts.solution_designer import SolutionDesignerPrompts
+from src.models.schemas import NormalizedProblem, Candidate, Critique, CritiqueIssue
+from src.llm.openrouter import OpenRouterClient
+from src.prompts.design_brief import DesignBriefPrompts
+from src.prompts.solution_designer import SolutionDesignerPrompts
 
 
 # Required perspectives for critique coverage (MVP spec)
@@ -92,10 +92,17 @@ class Critic:
             severity = issue_data.get("severity", "minor")
             if severity not in ("blocker", "major", "minor"):
                 severity = "minor"
+            
+            # Parse category (V1 feature)
+            category = issue_data.get("category", "general")
+            if category not in ("correctness", "completeness", "constraint_violation", 
+                               "clarity", "uncertainty", "safety", "feasibility", "general"):
+                category = "general"
 
             issues.append(CritiqueIssue(
                 role=issue_data.get("role", "general"),
                 severity=severity,
+                category=category,
                 description=issue_data.get("description", ""),
                 suggested_fix=issue_data.get("suggested_fix"),
             ))
