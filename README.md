@@ -22,7 +22,6 @@ The system enforces a bounded, linear pipeline where every generation undergoes 
 ## Installation
 
 ```bash
-cd zeus
 uv sync
 ```
 
@@ -34,12 +33,24 @@ Set your OpenRouter API key:
 export OPENROUTER_API_KEY="your-api-key"
 ```
 
+OR set it in a `.env` file at the project root:
+
+```bash
+OPENROUTER_API_KEY="your-api-key"
+```
+
 ---
 
 ## Usage
 
+### Command Line Interface
 ```bash
-uv run streamlit src/ui.py
+uv run zeus --mode brief --input "Design a scalable e-commerce platform."
+```
+## Web Interface
+
+```bash
+uv run streamlit ui.py
 ``` 
 
 ---
@@ -74,10 +85,8 @@ Normalize → Plan → Generate v1 → Critique v1 → [Revise → Critique v2] 
 ## Project Structure
 
 ```
-zeus/
 ├── src/
-│   ├── cli.py   # Command Line Interface
-|   ├── ui.py    # Streamlit UI            
+│   ├── cli.py   # Command Line Interface          
 │   ├── core/
 │   │   ├── run_controller.py   # Pipeline orchestration
 │   │   ├── normalizer.py       # Input normalization
@@ -95,6 +104,7 @@ zeus/
 │       └── solution_designer.py # Solution mode prompts
 ├── run_records/                # Persisted run history (JSON)
 └── tests/                      # Test suite
+└── ui.py                       # Streamlit UI
 ```
 
 ---
