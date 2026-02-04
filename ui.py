@@ -37,6 +37,34 @@ def format_evaluation_summary(response) -> str:
     # Header
     lines.append("\n---\n")
     lines.append("## Evaluation Summary\n")
+
+    # V2 Regression Analysis
+    if hasattr(response, 'regression_analysis') and response.regression_analysis:
+        reg = response.regression_analysis
+        lines.append("\n### V2 Regression Analysis\n")
+        
+        status_text = "REGRESSION DETECTED" if reg.is_worse else "Improvement / Stable"
+        status_emoji = "📉" if reg.is_worse else "📈"
+        lines.append(f"- **Status:** {status_emoji} {status_text}\n")
+        lines.append(f"- **Baseline Run:** {reg.baseline_run_id[:8]}\n")
+        
+        cov_sign = "+" if reg.coverage_delta >= 0 else ""
+        lines.append(f"- **Coverage Delta:** {cov_sign}{int(reg.coverage_delta * 100)}%\n")
+        
+        iss_sign = "+" if reg.issues_delta > 0 else ""
+        lines.append(f"- **Total Issues Delta:** {iss_sign}{reg.issues_delta}\n")
+        
+        if reg.blocker_delta != 0:
+             b_sign = "+" if reg.blocker_delta > 0 else ""
+             lines.append(f"- **Blockers Delta:** {b_sign}{reg.blocker_delta}\n")
+             
+        if reg.major_delta != 0:
+             m_sign = "+" if reg.major_delta > 0 else ""
+             lines.append(f"- **Majors Delta:** {m_sign}{reg.major_delta}\n")
+
+        if reg.constraints_delta != 0:
+             c_sign = "+" if reg.constraints_delta > 0 else ""
+             lines.append(f"- **Constraints Delta:** {c_sign}{reg.constraints_delta}\n")
     
     # Confidence and Coverage
     lines.append("### Quality Metrics\n")
@@ -121,7 +149,34 @@ def display_response(response):
     # 1. Output
     st.markdown(response.output)
     
-    # 2. Evaluation Summary
+    # 2. V2 Regression Analysis
+    if hasattr(response, 'regression_analysis') and response.regression_analysis:
+        reg = response.regression_analysis
+        status_text = "REGRESSION DETECTED" if reg.is_worse else "Improvement / Stable"
+        
+        st.markdown("### 📉 V2 Regression Analysis")
+        with st.container(border=True):
+             if reg.is_worse:
+                  st.error(f"{status_text} vs Base Run: {reg.baseline_run_id[:8]}")
+             else:
+                  st.success(f"{status_text} vs Base Run: {reg.baseline_run_id[:8]}")
+             
+             cols = st.columns(4)
+             
+             # Coverage Delta
+             cov_sign = "+" if reg.coverage_delta >= 0 else ""
+             cols[0].metric("Coverage Delta", f"{cov_sign}{int(reg.coverage_delta * 100)}%")
+             
+             # Issues Delta
+             cols[1].metric("Issues Delta", f"{reg.issues_delta}", delta=f"{reg.issues_delta}", delta_color="inverse")
+             
+             # Constraints Delta
+             cols[2].metric("Constraints Delta", f"{reg.constraints_delta}", delta=f"{reg.constraints_delta}", delta_color="inverse")
+
+             # Blockers/Majors
+             cols[3].markdown(f"**Blockers:** {reg.blocker_delta:+d}  \n**Majors:** {reg.major_delta:+d}")
+
+    # 3. V1 Evaluation
     # Check if we have evaluation data
     has_eval = response.confidence or response.coverage_score is not None or getattr(response, 'evaluation_summary', None)
     
@@ -166,6 +221,9 @@ def display_response(response):
                 missing = eval_sum.get('missing_perspectives', [])
                 if missing:
                     st.warning(f"Missing Perspectives: {', '.join(missing)}")
+                covered = eval_sum.get('covered_perspectives', [])
+                if covered:
+                    st.success(f"Covered Perspectives: {', '.join(covered)}")
 
     # 3. Tradeoffs
     if response.tradeoffs:
@@ -278,12 +336,19 @@ with tab1:
             # Prepare download content with evaluation summary
             download_content = response.output + format_evaluation_summary(response)
             
-            st.download_button(
-                label="Download Brief (with Evaluation)",
-                data=download_content,
-                file_name=f"design_brief_{response.run_id}.md",
-                mime="text/markdown"
-            )
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="Download Brief",
+                    data=download_content,
+                    file_name=f"design_brief_{response.run_id}.md",
+                    mime="text/markdown"
+                )
+            with col2:
+                if st.button("Set as Baseline", key=f"base_brief_{response.run_id}"):
+                     p = get_persistence()
+                     p.save_baseline(response.run_id, "baseline_brief")
+                     st.success("Saved as baseline_brief")
             
             st.divider()
             display_response(response)
@@ -321,12 +386,19 @@ with tab2:
         # Prepare download content with evaluation summary
         download_content = response.output + format_evaluation_summary(response)
         
-        st.download_button(
-            label="Download Solution (with Evaluation)",
-            data=download_content,
-            file_name=f"solution_{response.run_id}.md",
-            mime="text/markdown"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="Download Solution",
+                data=download_content,  
+                file_name=f"solution_{response.run_id}.md",
+                mime="text/markdown"
+            )
+        with col2:
+            if st.button("Set as Baseline", key=f"base_sol_{response.run_id}"):
+                    p = get_persistence()
+                    p.save_baseline(response.run_id, "baseline_solution")
+                    st.success("Saved as baseline_solution")
         
         st.divider()
         display_response(response)

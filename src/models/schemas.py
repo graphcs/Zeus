@@ -89,9 +89,23 @@ class EvaluationSummary(BaseModel):
     blockers: int = Field(default=0, description="Blocker-level issues")
     majors: int = Field(default=0, description="Major-level issues")
     minors: int = Field(default=0, description="Minor-level issues")
+    constraint_violations: int = Field(default=0, description="Count of specific constraint violations")
     missing_perspectives: list[str] = Field(default_factory=list, description="Missing critique perspectives")
     covered_perspectives: list[str] = Field(default_factory=list, description="Covered critique perspectives")
     issues_by_category: dict[str, int] = Field(default_factory=dict, description="Issue count by category")
+
+
+class RegressionDelta(BaseModel):
+    """V2 Regression analysis: Current vs Baseline."""
+    is_worse: bool = Field(..., description="If true, current run is objectively worse than baseline")
+    coverage_delta: float = Field(..., description="Change in coverage score (current - baseline)")
+    issues_delta: int = Field(..., description="Change in total issues (current - baseline)")
+    blocker_delta: int = Field(..., description="Change in blockers")
+    major_delta: int = Field(..., description="Change in majors")
+    constraints_delta: int = Field(default=0, description="Change in constraint violations")
+    
+    baseline_run_id: str = Field(..., description="ID of the baseline run used")
+    baseline_timestamp: str = Field(..., description="Timestamp of the baseline run")
 
 
 # ============================================================================
@@ -133,6 +147,10 @@ class ZeusResponse(BaseModel):
     evaluation_summary: dict | None = Field(
         default=None,
         description="Complete V1 evaluation summary with detailed metrics"
+    )
+    regression_analysis: RegressionDelta | None = Field(
+        default=None,
+        description="V2 Regression analysis against baseline"
     )
 
 

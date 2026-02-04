@@ -11,7 +11,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
-from src.models.schemas import UsageStats
+from src.models.schemas import UsageStats, RegressionDelta
 from src.utils.read_file import read_file_content as read_file_utils
 from dotenv import load_dotenv
 
@@ -36,6 +36,7 @@ def print_response(
     coverage_score: float | None = None,
     tradeoffs: list[str] | None = None,
     evaluation_summary: dict | None = None,
+    regression_analysis: RegressionDelta | None = None,
 ) -> None:
     """Print the Zeus response in a formatted way with V1 evaluation signals.
     
@@ -49,9 +50,56 @@ def print_response(
         coverage_score: V1 coverage score (0.0-1.0)
         tradeoffs: V1 design tradeoffs
         evaluation_summary: V1 complete evaluation summary
+        regression_analysis: V2 regression analysis
     """
     # Main output
     console.print(Markdown(output))
+
+    # V2: Regression Analysis Panel
+    if regression_analysis:
+        console.print()
+        reg = regression_analysis
+        
+        # Determine color/emoji
+        status_color = "red" if reg.is_worse else "green"
+        status_emoji = "📉" if reg.is_worse else "📈"
+        status_text = "REGRESSION DETECTED" if reg.is_worse else "Improvement / Stable"
+        
+        reg_lines = []
+        reg_lines.append(f"{status_emoji} Status: [{status_color}]{status_text}[/{status_color}]")
+        reg_lines.append(f"Base Run: {reg.baseline_run_id[:8]} ({reg.baseline_timestamp})")
+        reg_lines.append("")
+        
+        # Metrics
+        cov_sign = "+" if reg.coverage_delta >= 0 else ""
+        cov_color = "green" if reg.coverage_delta >= 0 else "red"
+        reg_lines.append(f"📊 Coverage Delta: [{cov_color}]{cov_sign}{int(reg.coverage_delta * 100)}%[/{cov_color}]")
+        
+        # Issues (Negative is good for issues)
+        iss_sign = "+" if reg.issues_delta > 0 else ""
+        iss_color = "red" if reg.issues_delta > 0 else "green"
+        reg_lines.append(f"🐛 Total Issues: [{iss_color}]{iss_sign}{reg.issues_delta}[/{iss_color}]")
+        
+        if reg.blocker_delta != 0:
+             b_sign = "+" if reg.blocker_delta > 0 else ""
+             b_color = "red" if reg.blocker_delta > 0 else "green"
+             reg_lines.append(f"🚫 Blockers: [{b_color}]{b_sign}{reg.blocker_delta}[/{b_color}]")
+             
+        if reg.major_delta != 0:
+             m_sign = "+" if reg.major_delta > 0 else ""
+             m_color = "red" if reg.major_delta > 0 else "green"
+             reg_lines.append(f"⚠️ Majors: [{m_color}]{m_sign}{reg.major_delta}[/{m_color}]")
+
+        if reg.constraints_delta != 0:
+             c_sign = "+" if reg.constraints_delta > 0 else ""
+             c_color = "red" if reg.constraints_delta > 0 else "green"
+             reg_lines.append(f"🔒 Constraints: [{c_color}]{c_sign}{reg.constraints_delta}[/{c_color}]")
+             
+        console.print(Panel(
+            "\n".join(reg_lines),
+            title="📉 V2 Regression Analysis",
+            border_style=status_color,
+        ))
 
     # V1: Evaluation Summary Panel
     if confidence or coverage_score is not None or evaluation_summary:
@@ -196,6 +244,11 @@ def brief(
         "--output", "-o",
         help="Save output to file",
     ),
+    set_baseline: bool = typer.Option(
+        False,
+        "--set-baseline",
+        help="Set this run as the baseline for future regressions",
+    ),
 ) -> None:
     """Generate a Design Brief from an idea or problem statement.
 
@@ -242,6 +295,10 @@ def brief(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
+    # Get evaluation summary if available
+    eval_summary = getattr(response, 'evaluation_summary', None)
+    regression = getattr(response, 'regression_analysis', None)
+
     print_response(
         response.output,
         response.assumptions,
@@ -251,11 +308,22 @@ def brief(
         response.confidence,
         response.coverage_score,
         response.tradeoffs,
+        eval_summary,
+        regression,
     )
 
     if output_file:
         output_file.write_text(response.output)
         console.print(f"\n[green]Output saved to {output_file}[/green]")
+
+    if set_baseline:
+        persistence = Persistence()
+        baseline_name = "baseline_brief"
+        path = persistence.save_baseline(response.run_id, baseline_name)
+        if path:
+            console.print(f"\n[green]Saved as baseline: {path}[/green]")
+        else:
+            console.print("\n[red]Failed to save baseline[/red]")
 
 
 @app.command()
@@ -290,6 +358,11 @@ def solution(
         None,
         "--output", "-o",
         help="Save output to file",
+    ),
+    set_baseline: bool = typer.Option(
+        False,
+        "--set-baseline",
+        help="Set this run as the baseline for future regressions",
     ),
 ) -> None:
     """Generate a Target Solution from a Design Brief.
@@ -333,11 +406,11 @@ def solution(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
+
     # Get evaluation summary if available
-    eval_summary = None
-    if hasattr(response, 'evaluation_summary'):
-        eval_summary = response.evaluation_summary
-    
+    eval_summary = getattr(response, 'evaluation_summary', None)
+    regression = getattr(response, 'regression_analysis', None)
+
     print_response(
         response.output,
         response.assumptions,
@@ -348,11 +421,21 @@ def solution(
         response.coverage_score,
         response.tradeoffs,
         eval_summary,
+        regression,
     )
 
     if output_file:
         output_file.write_text(response.output)
         console.print(f"\n[green]Output saved to {output_file}[/green]")
+
+    if set_baseline:
+        persistence = Persistence()
+        baseline_name = "baseline_solution"
+        path = persistence.save_baseline(response.run_id, baseline_name)
+        if path:
+            console.print(f"\n[green]Saved as baseline: {path}[/green]")
+        else:
+            console.print("\n[red]Failed to save baseline[/red]")
 
 
 @app.command()
