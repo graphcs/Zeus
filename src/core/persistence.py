@@ -132,3 +132,41 @@ class Persistence:
             if run_id[:8] in filepath.name:
                 return filepath
         return None
+
+    def save_baseline(self, run_id: str, name: str) -> Path | None:
+        """Save a run as a named baseline.
+        
+        Args:
+            run_id: The ID of the run to promote to baseline.
+            name: The name of the baseline (e.g. 'brief_golden').
+        """
+        record = self.load(run_id)
+        if not record:
+            return None
+            
+        baseline_dir = self.base_dir / "baselines"
+        baseline_dir.mkdir(exist_ok=True)
+        
+        filepath = baseline_dir / f"{name}.json"
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(record.model_dump(), f, indent=2, ensure_ascii=False)
+            
+        return filepath
+
+    def get_baseline(self, name: str) -> RunRecord | None:
+        """Get a named baseline.
+        
+        Args:
+            name: The name of the baseline (e.g., 'brief_golden').
+        """
+        filepath = self.base_dir / "baselines" / f"{name}.json"
+        if not filepath.exists():
+            return None
+            
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return RunRecord.model_validate(data)
+        except Exception:
+            return None

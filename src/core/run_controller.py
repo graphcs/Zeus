@@ -19,6 +19,7 @@ from src.core.assembler import Assembler
 from src.core.constraint_checker import ConstraintChecker
 from src.core.issue_structurer import IssueStructurer
 from src.core.persistence import Persistence
+from src.core.comparator import Comparator
 from src.prompts.design_brief import DesignBriefPrompts
 from src.prompts.solution_designer import SolutionDesignerPrompts
 
@@ -100,6 +101,20 @@ class RunController:
             # Wrap entire pipeline in total run timeout
             async with asyncio.timeout(self.budget_config.total_run_timeout):
                 await self._execute_pipeline(request, record)
+
+            # Assembler must be called on success path too
+            record.final_response = self.assembler.assemble(record)
+            
+            # V2: Regression Analysis against baseline
+            # Try to match a baseline by mode (e.g., 'baseline_brief', 'baseline_solution')
+            baseline_name = f"baseline_{request.mode}"
+            baseline = self.persistence.get_baseline(baseline_name)
+            
+            if baseline:
+                self.on_progress(f"Running regression analysis against {baseline_name}...")
+                regression = Comparator.compare(record, baseline)
+                if regression:
+                    record.final_response.regression_analysis = regression
 
         except TimeoutError:
             # Total run timeout exceeded
