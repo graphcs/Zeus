@@ -104,6 +104,13 @@ class Assembler:
 
         # Collect known issues from critique
         known_issues = self._collect_known_issues(record)
+        
+        # V3: Structured issues
+        structured_issues = record.structured_issues or []
+        
+        # Backfill legacy known_issues if empty but we have V3 data
+        if not known_issues and structured_issues:
+            known_issues = [i.issue for i in structured_issues]
 
         # Ensure assumptions and known_issues are always present
         assumptions = final_candidate.assumptions or []
@@ -117,6 +124,7 @@ class Assembler:
             output=self._format_output(final_candidate, record),
             assumptions=assumptions,
             known_issues=known_issues,
+            structured_issues=structured_issues,
             run_id=record.run_id,
             usage=usage,
             # V1 fields
@@ -124,6 +132,8 @@ class Assembler:
             coverage_score=eval_summary.coverage_score,
             tradeoffs=tradeoffs,
             evaluation_summary=eval_summary.model_dump(),  # Include complete evaluation summary
+            # V3 fields
+            verification_report=record.verification_report,
         )
 
     def _format_output(self, candidate: Candidate, record: RunRecord) -> str:

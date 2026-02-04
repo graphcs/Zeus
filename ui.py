@@ -96,6 +96,26 @@ def format_evaluation_summary(response) -> str:
                 cat_label = cat.replace('_', ' ').title()
                 lines.append(f"| {cat_label} | {count} |\n")
     
+    # V3 Verification
+    if hasattr(response, 'verification_report') and response.verification_report:
+        rep = response.verification_report
+        lines.append("\n### 🛡️ Constraints Verification\n")
+        lines.append(f"- **Coverage:** {int(rep.coverage_score * 100)}%\n\n")
+        lines.append("| Status | Constraint | Evidence |\n")
+        lines.append("|--------|------------|----------|\n")
+        for c in rep.checks:
+            icon = {"pass": "✅", "fail": "❌", "unverified": "❓"}.get(c.status, "❓")
+            evidence = (c.evidence or "").replace("|", "\\|").replace("\n", " ")[:100]
+            lines.append(f"| {icon} {c.status.upper()} | {c.constraint} | {evidence} |\n")
+
+    # V3 Structured Issues
+    if hasattr(response, 'structured_issues') and response.structured_issues:
+        lines.append("\n### ⚠️ Known Issues Registry\n")
+        lines.append("| Issue | Impact | Mitigation | Verification |\n")
+        lines.append("|-------|--------|------------|--------------|\n")
+        for si in response.structured_issues:
+             lines.append(f"| {si.issue} | {si.impact} | {si.mitigation} | {si.verification_step} |\n")
+
     # Tradeoffs
     if response.tradeoffs:
         lines.append("\n###  Design Tradeoffs\n")
@@ -181,8 +201,33 @@ def display_response(response):
             for a in response.assumptions:
                 st.markdown(f"• {a}")
 
-    # 5. Known Issues
-    if response.known_issues:
+    # 5. V3 Signals
+    # Verification Report
+    if hasattr(response, 'verification_report') and response.verification_report:
+        report = response.verification_report
+        st.markdown("### 🛡️ Constraints Verification (V3)")
+        with st.container(border=True):
+             # Metric
+             pct = int(report.coverage_score * 100)
+             color = "🟢" if pct == 100 else "🟡" if pct > 50 else "🔴"
+             st.markdown(f"**Verification Coverage:** {color} **{pct}%**")
+             
+             with st.expander("Detailed Checks"):
+                 for check in report.checks:
+                     icon = {"pass": "✅", "fail": "❌", "unverified": "❓"}.get(check.status, "❓")
+                     st.markdown(f"**{icon} {check.status.upper()}**: {check.constraint}")
+                     if check.evidence:
+                         st.caption(f"Evidence: {check.evidence}")
+
+    # Structured Issues (Prioritize over legacy known_issues)
+    if hasattr(response, 'structured_issues') and response.structured_issues:
+        st.markdown("### ⚠️ Known Issues Registry (V3)")
+        for i, issue in enumerate(response.structured_issues):
+            with st.expander(f"{i+1}. {issue.issue}"):
+                st.markdown(f"**Impact:** {issue.impact}")
+                st.markdown(f"**Mitigation:** {issue.mitigation}")
+                st.markdown(f"**Verification:** {issue.verification_step}")
+    elif response.known_issues:
          st.markdown("### ⚠️ Known Issues")
          with st.container(border=True):
             for i in response.known_issues:

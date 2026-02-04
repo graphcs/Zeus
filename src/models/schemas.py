@@ -98,6 +98,27 @@ class EvaluationSummary(BaseModel):
 # Output Models
 # ============================================================================
 
+class ConstraintCheckResult(BaseModel):
+    """Result of a deterministic or LLM-assisted constraint check."""
+    constraint: str = Field(..., description="The constraint being checked")
+    status: Literal["pass", "fail", "unverified"] = Field(..., description="Check status")
+    evidence: str | None = Field(default=None, description="Reasoning or evidence for the status")
+
+
+class VerificationReport(BaseModel):
+    """V3 Verification coverage report."""
+    checks: list[ConstraintCheckResult] = Field(default_factory=list, description="List of constraint checks")
+    coverage_score: float = Field(..., ge=0.0, le=1.0, description="Percentage of constraints verified (0.0-1.0)")
+
+
+class StructuredKnownIssue(BaseModel):
+    """V3 Structured known issue."""
+    issue: str = Field(..., description="Description of the issue")
+    impact: str = Field(..., description="Potential impact of the issue")
+    mitigation: str = Field(..., description="Proposed mitigation strategy")
+    verification_step: str = Field(..., description="How to verify the fix or impact")
+
+
 class UsageStats(BaseModel):
     """Token usage and cost statistics for a run."""
     llm_calls: int = Field(default=0, description="Number of LLM calls made")
@@ -111,7 +132,8 @@ class ZeusResponse(BaseModel):
     """Final output from Zeus."""
     output: str = Field(..., description="Design Brief or Target Solution (Markdown)")
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made (always present)")
-    known_issues: list[str] = Field(default_factory=list, description="Known issues (always present)")
+    known_issues: list[str] = Field(default_factory=list, description="Known issues (backward compatibility)")
+    structured_issues: list[StructuredKnownIssue] = Field(default_factory=list, description="V3 Structured known issues")
     run_id: str = Field(..., description="Unique run identifier")
     usage: UsageStats = Field(default_factory=UsageStats, description="Token usage and cost")
     
@@ -133,6 +155,12 @@ class ZeusResponse(BaseModel):
     evaluation_summary: dict | None = Field(
         default=None,
         description="Complete V1 evaluation summary with detailed metrics"
+    )
+    
+    # V3 Verification Signals
+    verification_report: VerificationReport | None = Field(
+        default=None,
+        description="V3 Verification coverage report"
     )
 
 
@@ -192,6 +220,9 @@ class RunRecord(BaseModel):
     critique_v1: Critique | None = None
     candidate_v2: Candidate | None = None
     critique_v2: Critique | None = None
+    # V3 Artifacts
+    verification_report: VerificationReport | None = None
+    structured_issues: list[StructuredKnownIssue] | None = None
     final_response: ZeusResponse | None = None
     model_version: str = "anthropic/claude-sonnet-4"
     prompt_versions: dict = Field(default_factory=dict)

@@ -16,6 +16,8 @@ from src.core.planner import Planner
 from src.core.generator import Generator
 from src.core.critic import Critic
 from src.core.assembler import Assembler
+from src.core.constraint_checker import ConstraintChecker
+from src.core.issue_structurer import IssueStructurer
 from src.core.persistence import Persistence
 from src.prompts.design_brief import DesignBriefPrompts
 from src.prompts.solution_designer import SolutionDesignerPrompts
@@ -72,6 +74,8 @@ class RunController:
         self.generator = Generator(llm_client)
         self.critic = Critic(llm_client)
         self.assembler = Assembler()
+        self.constraint_checker = ConstraintChecker(llm_client)
+        self.issue_structurer = IssueStructurer(llm_client)
 
     async def run(self, request: ZeusRequest) -> ZeusResponse:
         """Execute the full Zeus pipeline.
@@ -207,6 +211,48 @@ class RunController:
                 record.errors.append(
                     f"Skipped revision: insufficient budget ({remaining_calls} calls remaining, need 2)"
                 )
+
+        # Phase 5.5: V3 Verification & Structuring
+        final_candidate = record.candidate_v2 or record.candidate_v1
+        final_critique = record.critique_v2 or record.critique_v1
+        
+        # Constraint Verification (V3)
+        if final_candidate and record.normalized_problem and record.normalized_problem.constraints:
+            remaining_calls = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+            if remaining_calls > 0:
+                self.on_progress("Verifying constraints (V3)...")
+                try:
+                    self._check_budget(record, "verify_constraints")
+                    report, usage = await self.constraint_checker.verify_constraints(
+                        final_candidate.content,
+                        record.normalized_problem.constraints
+                    )
+                    record.verification_report = report
+                    self._update_budget(record, usage)
+                except BudgetExceededError:
+                    record.errors.append("Skipped constraint verification: budget exceeded")
+
+        # Issue Structuring (V3)
+        if final_critique and final_critique.issues:
+             # Prepare raw issues list from critique
+             raw_issues = [
+                 f"{issue.role.upper()} ({issue.severity}): {issue.description}"
+                 for issue in final_critique.issues
+             ]
+             # Also include uncertainty flags from candidate?
+             if final_candidate and final_candidate.uncertainty_flags:
+                 raw_issues.extend([f"UNCERTAINTY: {flag}" for flag in final_candidate.uncertainty_flags])
+             
+             remaining_calls = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+             if remaining_calls > 0 and raw_issues:
+                 self.on_progress("Structuring identified issues (V3)...")
+                 try:
+                     self._check_budget(record, "structure_issues")
+                     structured, usage = await self.issue_structurer.structure_issues(raw_issues)
+                     record.structured_issues = structured
+                     self._update_budget(record, usage)
+                 except BudgetExceededError:
+                     record.errors.append("Skipped issue structuring: budget exceeded")
 
         # Phase 6: Assemble final output
         self.on_progress("Assembling final output...")

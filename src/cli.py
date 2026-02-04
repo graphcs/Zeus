@@ -11,7 +11,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
-from src.models.schemas import UsageStats
+from src.models.schemas import UsageStats, VerificationReport, StructuredKnownIssue
 from src.utils.read_file import read_file_content as read_file_utils
 from dotenv import load_dotenv
 
@@ -36,6 +36,8 @@ def print_response(
     coverage_score: float | None = None,
     tradeoffs: list[str] | None = None,
     evaluation_summary: dict | None = None,
+    verification_report: VerificationReport | None = None,
+    structured_issues: list[StructuredKnownIssue] | None = None,
 ) -> None:
     """Print the Zeus response in a formatted way with V1 evaluation signals.
     
@@ -49,6 +51,8 @@ def print_response(
         coverage_score: V1 coverage score (0.0-1.0)
         tradeoffs: V1 design tradeoffs
         evaluation_summary: V1 complete evaluation summary
+        verification_report: V3 constraint verification report
+        structured_issues: V3 structured known issues
     """
     # Main output
     console.print(Markdown(output))
@@ -77,7 +81,7 @@ def print_response(
                 cov_color = "yellow"
             else:
                 cov_color = "red"
-            eval_lines.append(f"📊 Coverage: [{cov_color}]{coverage_pct}%[/{cov_color}] ({int(coverage_score * 6)}/6 perspectives)")
+            eval_lines.append(f"📊 Critique Coverage: [{cov_color}]{coverage_pct}%[/{cov_color}] ({int(coverage_score * 6)}/6 perspectives)")
         
         # Add detailed metrics if available
         if evaluation_summary:
@@ -111,6 +115,34 @@ def print_response(
                 border_style="cyan",
             ))
 
+    # V3: Constraints Verification
+    if verification_report:
+        console.print()
+        ver_lines = []
+        
+        v_score = verification_report.coverage_score
+        v_pct = int(v_score * 100)
+        v_color = "green" if v_pct == 100 else "yellow" if v_pct >= 50 else "red"
+        
+        ver_lines.append(f"🛡️ Verification Coverage: [{v_color}]{v_pct}%[/{v_color}]")
+        ver_lines.append("")
+        
+        # Only show table if checks exist
+        if verification_report.checks:
+            ver_lines.append("[bold]Constraint Checks:[/bold]")
+            for check in verification_report.checks:
+                icon = {"pass": "✅", "fail": "❌", "unverified": "❓"}.get(check.status, "❓")
+                status_color = {"pass": "green", "fail": "red", "unverified": "yellow"}.get(check.status, "white")
+                ver_lines.append(f"  {icon} [{status_color}]{check.status.upper()}[/{status_color}]: {check.constraint}")
+                if check.evidence:
+                    ver_lines.append(f"     [dim]Evidence: {check.evidence}[/dim]")
+
+        console.print(Panel(
+            "\n".join(ver_lines),
+            title="🛡️ Constraints Verification (V3)",
+            border_style="green",
+        ))
+
     # Tradeoffs (V1)
     if tradeoffs:
         console.print()
@@ -128,13 +160,29 @@ def print_response(
         border_style="blue",
     ))
 
-    # Known Issues
+    # Known Issues (V3 Structured or Legacy)
     console.print()
-    console.print(Panel(
-        "\n".join(f"• {i}" for i in known_issues),
-        title="⚠️ Known Issues",
-        border_style="yellow",
-    ))
+    if structured_issues:
+        issue_lines = []
+        for i, issue in enumerate(structured_issues):
+            issue_lines.append(f"[bold]{i+1}. {issue.issue}[/bold]")
+            issue_lines.append(f"   [red]Impact:[/red] {issue.impact}")
+            issue_lines.append(f"   [green]Mitigation:[/green] {issue.mitigation}")
+            issue_lines.append(f"   [blue]Verification:[/blue] {issue.verification_step}")
+            issue_lines.append("")
+            
+        console.print(Panel(
+            "\n".join(issue_lines),
+            title="⚠️ Known Issues Registry (V3)",
+            border_style="yellow",
+        ))
+    else:
+        # Legacy lists
+        console.print(Panel(
+            "\n".join(f"• {i}" for i in known_issues),
+            title="⚠️ Known Issues",
+            border_style="yellow",
+        ))
 
     # Usage stats
     if usage:
@@ -251,6 +299,9 @@ def brief(
         response.confidence,
         response.coverage_score,
         response.tradeoffs,
+        evaluation_summary=getattr(response, "evaluation_summary", None),
+        verification_report=getattr(response, "verification_report", None),
+        structured_issues=getattr(response, "structured_issues", None),
     )
 
     if output_file:
@@ -348,6 +399,8 @@ def solution(
         response.coverage_score,
         response.tradeoffs,
         eval_summary,
+        verification_report=getattr(response, "verification_report", None),
+        structured_issues=getattr(response, "structured_issues", None),
     )
 
     if output_file:
@@ -426,6 +479,8 @@ def show(
             coverage_score,
             tradeoffs,
             eval_summary,
+            verification_report=getattr(record.final_response, "verification_report", None),
+            structured_issues=getattr(record.final_response, "structured_issues", None),
         )
 
 
