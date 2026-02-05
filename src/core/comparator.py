@@ -38,24 +38,28 @@ class Comparator:
             
         # Compute Deltas
         coverage_delta = curr_eval.coverage_score - base_eval.coverage_score
-        
+        completeness_delta = curr_eval.completeness_score - base_eval.completeness_score
+
         # Issue deltas (Positive means MORE issues, which is bad)
         issues_delta = curr_eval.total_issues - base_eval.total_issues
         blocker_delta = curr_eval.blockers - base_eval.blockers
         major_delta = curr_eval.majors - base_eval.majors
         constraints_delta = curr_eval.constraint_violations - base_eval.constraint_violations
-        
+
         # Determine "Is Worse"
-        # Heuristic: Worse if blockers increased, OR majors increased, OR coverage dropped significantly
+        # Heuristic: Worse if blockers increased, OR majors increased,
+        # OR coverage dropped significantly, OR completeness dropped significantly
         is_worse = False
-        
+
         if blocker_delta > 0:
             is_worse = True
         elif major_delta > 0:
             is_worse = True
-        elif coverage_delta < -0.15: # Significant drop in coverage (e.g. missing 1 perspective ~ 0.16)
+        elif coverage_delta < -0.15:  # Missing ~1 perspective
             is_worse = True
-            
+        elif completeness_delta < -0.2:  # Missing 2+ sections relative to baseline
+            is_worse = True
+
         return RegressionDelta(
             is_worse=is_worse,
             coverage_delta=round(coverage_delta, 2),
@@ -63,6 +67,7 @@ class Comparator:
             blocker_delta=blocker_delta,
             major_delta=major_delta,
             constraints_delta=constraints_delta,
+            completeness_delta=round(completeness_delta, 2),
             baseline_run_id=baseline.run_id,
             baseline_timestamp=baseline.timestamp
         )

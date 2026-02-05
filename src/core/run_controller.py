@@ -269,9 +269,6 @@ class RunController:
                  except BudgetExceededError:
                      record.errors.append("Skipped issue structuring: budget exceeded")
 
-        # Phase 6: Assemble final output
-        self.on_progress("Assembling final output...")
-        record.final_response = self.assembler.assemble(record)
 
     def _check_budget(self, record: RunRecord, phase: str) -> None:
         """Check if budget allows another LLM call.

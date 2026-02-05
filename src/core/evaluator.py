@@ -1,5 +1,6 @@
 """Evaluator - V1 evaluation signals and metrics computation."""
 
+import re
 from typing import Literal
 from src.models.schemas import (
     Candidate,
@@ -8,6 +9,52 @@ from src.models.schemas import (
     RunRecord,
     EvaluationSummary,
 )
+
+
+# Section checklists for completeness scoring
+BRIEF_REQUIRED_SECTIONS = [
+    "executive summary", "problem statement", "goals", "scope",
+    "requirements", "constraints", "tradeoff", "assumptions",
+    "success criteria", "open questions",
+]
+SOLUTION_REQUIRED_SECTIONS = [
+    "solution overview", "architecture", "components", "data model",
+    "api", "interface", "security", "scalability", "performance",
+    "error handling", "tradeoff", "testing", "implementation",
+    "constraints compliance", "assumptions", "risk", "open questions",
+]
+
+
+class CompletenessChecker:
+    """Checks output completeness against required section checklists."""
+
+    @staticmethod
+    def check(content: str, mode: str) -> tuple[float, list[str]]:
+        """Scan markdown headings against the mode's required sections.
+
+        Args:
+            content: The generated markdown content.
+            mode: Either "brief" or "solution".
+
+        Returns:
+            Tuple of (score 0.0-1.0, list of missing section names).
+        """
+        checklist = BRIEF_REQUIRED_SECTIONS if mode == "brief" else SOLUTION_REQUIRED_SECTIONS
+
+        # Extract all headings (h1-h3) from content
+        headings = re.findall(r"^#{1,3}\s+(.+)", content, re.MULTILINE | re.IGNORECASE)
+        headings_lower = [h.strip().lower() for h in headings]
+
+        found = set()
+        for section in checklist:
+            for heading in headings_lower:
+                if section in heading or heading in section:
+                    found.add(section)
+                    break
+
+        missing = [s for s in checklist if s not in found]
+        score = len(found) / len(checklist) if checklist else 1.0
+        return score, missing
 
 
 # Issue category definitions for taxonomy
@@ -164,16 +211,25 @@ class EvaluationEngine:
     
     def evaluate(self, record: RunRecord) -> EvaluationSummary:
         """Generate comprehensive evaluation summary for a run.
-        
+
         Args:
             record: The complete run record.
-            
+
         Returns:
             EvaluationSummary with all V1 metrics.
         """
         # Use final critique (v2 if exists, else v1)
         final_critique = record.critique_v2 or record.critique_v1
-        
+
+        # Completeness check (works even without critique)
+        final_candidate = record.candidate_v2 or record.candidate_v1
+        completeness_score = 0.0
+        missing_sections: list[str] = []
+        if final_candidate:
+            completeness_score, missing_sections = CompletenessChecker.check(
+                final_candidate.content, record.mode
+            )
+
         if final_critique is None:
             # No critique - return minimal summary
             return EvaluationSummary(
@@ -187,20 +243,22 @@ class EvaluationEngine:
                 missing_perspectives=[],
                 covered_perspectives=[],
                 issues_by_category={},
+                completeness_score=completeness_score,
+                missing_sections=missing_sections,
             )
-        
+
         # Compute metrics
         severity_counts = self._count_by_severity(final_critique)
         category_counts = self._count_by_category(final_critique)
         coverage_score = self._compute_coverage(final_critique)
         covered, missing = self._analyze_perspectives(final_critique)
-        
+
         # Evaluate confidence
         confidence = self.confidence_evaluator.evaluate(
             final_critique,
             coverage_score,
         )
-        
+
         return EvaluationSummary(
             confidence=confidence,
             coverage_score=coverage_score,
@@ -212,6 +270,8 @@ class EvaluationEngine:
             missing_perspectives=list(missing),
             covered_perspectives=list(covered),
             issues_by_category=category_counts,
+            completeness_score=completeness_score,
+            missing_sections=missing_sections,
         )
     
     def _count_by_severity(self, critique: Critique) -> dict[str, int]:

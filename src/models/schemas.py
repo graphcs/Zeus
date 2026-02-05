@@ -93,6 +93,8 @@ class EvaluationSummary(BaseModel):
     missing_perspectives: list[str] = Field(default_factory=list, description="Missing critique perspectives")
     covered_perspectives: list[str] = Field(default_factory=list, description="Covered critique perspectives")
     issues_by_category: dict[str, int] = Field(default_factory=dict, description="Issue count by category")
+    completeness_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Section completeness (0.0-1.0)")
+    missing_sections: list[str] = Field(default_factory=list, description="Required sections not found in output")
 
 
 class RegressionDelta(BaseModel):
@@ -103,7 +105,8 @@ class RegressionDelta(BaseModel):
     blocker_delta: int = Field(..., description="Change in blockers")
     major_delta: int = Field(..., description="Change in majors")
     constraints_delta: int = Field(default=0, description="Change in constraint violations")
-    
+    completeness_delta: float = Field(default=0.0, description="Change in completeness score (current - baseline)")
+
     baseline_run_id: str = Field(..., description="ID of the baseline run used")
     baseline_timestamp: str = Field(..., description="Timestamp of the baseline run")
 
