@@ -29,6 +29,8 @@ class ZeusRequest(BaseModel):
     mode: Literal["brief", "solution"] = Field(..., description="Which team to invoke")
     constraints: list[str] = Field(default_factory=list, description="User-specified constraints")
     context: str | dict | None = Field(default=None, description="Additional context")
+    human_suggestions: list[str] = Field(default_factory=list, description="Human guidance or candidate approaches")
+    prior_solutions: list[str] = Field(default_factory=list, description="Content of prior solutions for improvement")
 
 
 # ============================================================================
@@ -41,6 +43,8 @@ class NormalizedProblem(BaseModel):
     constraints: list[str] = Field(default_factory=list, description="All constraints (never dropped)")
     output_spec: str = Field(..., description="Expected output specification")
     context: dict = Field(default_factory=dict, description="Parsed context")
+    human_suggestions: list[str] = Field(default_factory=list, description="Human guidance")
+    prior_solutions: list[str] = Field(default_factory=list, description="Prior solutions")
 
 
 class Candidate(BaseModel):
@@ -48,6 +52,8 @@ class Candidate(BaseModel):
     content: str = Field(..., description="Design brief or solution content")
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made")
     uncertainty_flags: list[str] = Field(default_factory=list, description="Areas of uncertainty")
+    reasoning_trace: str = Field(default="", description="Compressed explanation of key decisions")
+    comparison_analysis: str = Field(default="", description="Comparison to alternatives or prior solutions")
 
 
 class CritiqueIssue(BaseModel):
@@ -151,6 +157,8 @@ class ZeusResponse(BaseModel):
     assumptions: list[str] = Field(default_factory=list, description="Assumptions made (always present)")
     known_issues: list[str] = Field(default_factory=list, description="Known issues (backward compatibility)")
     structured_issues: list[StructuredKnownIssue] = Field(default_factory=list, description="V3 Structured known issues")
+    reasoning_trace: str = Field(default="", description="Compressed reasoning trace")
+    comparison_analysis: str = Field(default="", description="Comparison to alternative solutions")
     run_id: str = Field(..., description="Unique run identifier")
     usage: UsageStats = Field(default_factory=UsageStats, description="Token usage and cost")
     

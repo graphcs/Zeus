@@ -36,12 +36,17 @@ class Generator:
         constraints_str = "\n".join(f"- {c}" for c in problem.constraints) if problem.constraints else "None"
         context_str = json.dumps(problem.context, indent=2) if problem.context else "None"
         plan_str = self._format_plan(plan)
+        
+        human_suggestions_str = "\n".join(f"- {h}" for h in problem.human_suggestions) if problem.human_suggestions else "None"
+        prior_solutions_str = "\n".join(f"- {p}" for p in problem.prior_solutions) if problem.prior_solutions else "None"
 
         prompt = prompts.GENERATE.format(
             problem_statement=problem.problem_statement,
             constraints=constraints_str,
             output_spec=problem.output_spec,
             context=context_str,
+            human_suggestions=human_suggestions_str,
+            prior_solutions=prior_solutions_str,
             plan=plan_str,
         )
 
@@ -56,6 +61,8 @@ class Generator:
             content=response.get("content", ""),
             assumptions=response.get("assumptions", []),
             uncertainty_flags=response.get("uncertainty_flags", []),
+            reasoning_trace=response.get("reasoning_trace", ""),
+            comparison_analysis=response.get("comparison_analysis", ""),
         )
 
         return candidate, usage
@@ -84,11 +91,16 @@ class Generator:
         context_str = json.dumps(problem.context, indent=2) if problem.context else "None"
         critique_str = self._format_critique(critique)
 
+        human_suggestions_str = "\n".join(f"- {h}" for h in problem.human_suggestions) if problem.human_suggestions else "None"
+        prior_solutions_str = "\n".join(f"- {p}" for p in problem.prior_solutions) if problem.prior_solutions else "None"
+
         prompt = prompts.REVISE.format(
             content=candidate.content,
             critique=critique_str,
             constraints=constraints_str,
             context=context_str,
+            human_suggestions=human_suggestions_str,
+            prior_solutions=prior_solutions_str,
         )
 
         response, usage = await self.llm.generate_json(
@@ -102,6 +114,8 @@ class Generator:
             content=response.get("content", candidate.content),
             assumptions=response.get("assumptions", candidate.assumptions),
             uncertainty_flags=response.get("uncertainty_flags", candidate.uncertainty_flags),
+            reasoning_trace=response.get("reasoning_trace", candidate.reasoning_trace),
+            comparison_analysis=response.get("comparison_analysis", candidate.comparison_analysis),
         )
 
         return revised, usage

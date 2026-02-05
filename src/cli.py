@@ -40,6 +40,8 @@ def print_response(
     verification_report: VerificationReport | None = None,
     structured_issues: list[StructuredKnownIssue] | None = None,
     regression_analysis: RegressionDelta | None = None,
+    reasoning_trace: str | None = None,
+    comparison_analysis: str | None = None,
 ) -> None:
     """Print the Zeus response in a formatted way with V1 evaluation signals.
     
@@ -56,9 +58,20 @@ def print_response(
         verification_report: V3 constraint verification report
         structured_issues: V3 structured known issues
         regression_analysis: V2 regression analysis
+        reasoning_trace: Compressed reasoning trace
+        comparison_analysis: Comparison to alternative solutions
     """
     # Main output
     console.print(Markdown(output))
+    
+    # Analysis & Rationale
+    if reasoning_trace or comparison_analysis:
+        console.print(Panel(
+            f"{'**Reasoning Trace:**\n' + reasoning_trace + '\n\n' if reasoning_trace else ''}"
+            f"{'**Comparison Analysis:**\n' + comparison_analysis if comparison_analysis else ''}",
+            title="🧠 Analysis & Rationale",
+            border_style="cyan"
+        ))
 
     # V2: Regression Analysis Panel
     if regression_analysis:
@@ -268,6 +281,16 @@ def read_file_content(file_path: Path) -> str:
 @app.command()
 def brief(
     prompt: str = typer.Argument(..., help="The idea or problem to create a design brief for"),
+    suggestion: Optional[list[str]] = typer.Option(
+        None,
+        "--suggestion", "-s",
+        help="Human suggestion or guidance",
+    ),
+    prior: Optional[list[str]] = typer.Option(
+        None,
+        "--prior", "-p",
+        help="Content of a prior solution to improve upon",
+    ),
     constraint: Optional[list[str]] = typer.Option(
         None,
         "--constraint", "-c",
@@ -337,6 +360,8 @@ def brief(
                 mode="brief",
                 constraints=constraints,
                 context=combined_context,
+                human_suggestions=list(suggestion) if suggestion else [],
+                prior_solutions=list(prior) if prior else [],
                 model=model,
                 on_progress=on_progress,
             ))
@@ -357,6 +382,8 @@ def brief(
         verification_report=getattr(response, "verification_report", None),
         structured_issues=getattr(response, "structured_issues", None),
         regression_analysis=getattr(response, "regression_analysis", None),
+        reasoning_trace=getattr(response, "reasoning_trace", None),
+        comparison_analysis=getattr(response, "comparison_analysis", None),
     )
 
     if output_file:
@@ -396,6 +423,16 @@ def solution(
         "--context",
         help="Additional context as a string",
     ),
+    suggestion: Optional[list[str]] = typer.Option(
+        None,
+        "--suggestion", "-s",
+        help="Human suggestion or guidance",
+    ),
+    prior: Optional[list[str]] = typer.Option(
+        None,
+        "--prior", "-p",
+        help="Content of a prior solution to improve upon",
+    ),
     model: Optional[str] = typer.Option(
         None,
         "--model", "-m",
@@ -428,6 +465,8 @@ def solution(
         raise typer.Exit(1)
 
     constraints = list(constraint) if constraint else []
+    suggestions_list = list(suggestion) if suggestion else []
+    priors_list = list(prior) if prior else []
 
     with Progress(
         SpinnerColumn(),
@@ -446,6 +485,8 @@ def solution(
                 mode="solution",
                 constraints=constraints,
                 context=context,
+                human_suggestions=suggestions_list,
+                prior_solutions=priors_list,
                 model=model,
                 on_progress=on_progress,
             ))
@@ -467,6 +508,8 @@ def solution(
         verification_report=getattr(response, "verification_report", None),
         structured_issues=getattr(response, "structured_issues", None),
         regression_analysis=getattr(response, "regression_analysis", None),
+        reasoning_trace=getattr(response, "reasoning_trace", None),
+        comparison_analysis=getattr(response, "comparison_analysis", None),
     )
 
     if output_file:

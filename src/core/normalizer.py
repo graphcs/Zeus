@@ -50,6 +50,8 @@ class Normalizer:
             constraints=self._merge_constraints(request.constraints, response.get("constraints", [])),
             output_spec=response.get("output_spec", self._default_output_spec(request.mode)),
             context=response.get("context", {}),
+            human_suggestions=request.human_suggestions,
+            prior_solutions=request.prior_solutions,
         )
 
         return normalized, usage

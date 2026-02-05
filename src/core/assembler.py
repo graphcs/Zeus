@@ -125,6 +125,8 @@ class Assembler:
             assumptions=assumptions,
             known_issues=known_issues,
             structured_issues=structured_issues,
+            reasoning_trace=final_candidate.reasoning_trace,
+            comparison_analysis=final_candidate.comparison_analysis,
             run_id=record.run_id,
             usage=usage,
             # V1 fields

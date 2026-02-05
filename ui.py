@@ -33,6 +33,14 @@ def get_persistence():
 def format_evaluation_summary(response) -> str:
     """Format evaluation summary in readable Markdown format."""
     lines = []
+
+    if hasattr(response,'reasoning_trace') and response.reasoning_trace:
+        lines.append("## Reasoning Trace\n")
+        lines.append(response.reasoning_trace)
+
+    if hasattr(response,'comparison_analysis') and response.comparison_analysis:
+        lines.append("## Comparison Analysis\n")
+        lines.append(response.comparison_analysis)
     
     # Header
     lines.append("\n---\n")
@@ -252,7 +260,17 @@ def display_response(response):
             for t in response.tradeoffs:
                 st.markdown(f"• {t}")
 
-    # 4. Assumptions
+    # 4. Analysis & Rationale
+    if response.reasoning_trace or response.comparison_analysis:
+        st.markdown("### 🧠 Analysis & Rationale")
+        if response.reasoning_trace:
+             with st.expander("Reasoning Trace"):
+                 st.markdown(response.reasoning_trace)
+        if response.comparison_analysis:
+             with st.expander("Comparison Analysis"):
+                 st.markdown(response.comparison_analysis)
+
+    # 5. Assumptions
     if response.assumptions:
          st.markdown("### 📋 Assumptions")
          with st.container(border=True):
@@ -303,7 +321,7 @@ def display_response(response):
     # 7. Run ID
     st.caption(f"Run ID: {response.run_id}")
 
-def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
+def run_zeus_ui(prompt, mode, constraints, context, file_uploads, human_suggestions=None, prior_solutions=None):
     
     # Process file uploads
     context_parts = []
@@ -336,6 +354,8 @@ def run_zeus_ui(prompt, mode, constraints, context, file_uploads):
             mode=mode,
             constraints=constraints,
             context=combined_context,
+            human_suggestions=human_suggestions,
+            prior_solutions=prior_solutions,
             model=None,
             on_progress=on_progress,
             max_llm_calls=max_llm_calls,
@@ -362,14 +382,19 @@ with tab1:
         brief_constraints = st.text_area("Constraints (one per line)", placeholder="- Must be open source\n- Must use Python", help="Specific constraints the design must adhere to.")
     with col2:
         brief_context = st.text_area("Additional Context (Text)", placeholder="Paste any extra info here...")
-        
+
+    brief_suggestions = st.text_area("Human Suggestions (Optional)", placeholder="- Consider using X\n- Avoid Y", help="Guidance or candidate ideas.")
+    brief_priors = st.text_area("Prior Solutions (Optional)", placeholder="Content of prior solutions...", help="Prior solution content to improve upon.")
     
     if st.button("Generate Brief", type="primary"):
         if not brief_prompt:
             st.warning("Please provide a prompt.")
         else:
             constraints_list = [c.strip() for c in brief_constraints.split("\n") if c.strip()]
-            response = run_zeus_ui(brief_prompt, "brief", constraints_list, brief_context, brief_files)
+            suggestions_list = [s.strip() for s in brief_suggestions.split("\n") if s.strip()]
+            priors_list = [p.strip() for p in brief_priors.split("\n") if p.strip()] if brief_priors else []
+            
+            response = run_zeus_ui(brief_prompt, "brief", constraints_list, brief_context, brief_files, suggestions_list, priors_list)
             
             if response:
                 st.session_state.brief_response = response
@@ -413,13 +438,18 @@ with tab2:
     with col2:
         sol_context = st.text_area("Additional Context (Text)", placeholder="Paste any extra info here...", key="sol_context")
     
+    sol_suggestions = st.text_area("Human Suggestions (Optional)", placeholder="- Use microservices\n- Event sourcing", key="sol_suggestions")
+    sol_priors = st.text_area("Prior Solutions (Optional)", placeholder="Prior architecture content...", key="sol_priors")
 
     if st.button("Generate Solution", type="primary"):
         if not sol_prompt:
             st.warning("Please provide a design brief.")
         else:
             constraints_list = [c.strip() for c in sol_constraints.split("\n") if c.strip()]
-            response = run_zeus_ui(sol_prompt, "solution", constraints_list, sol_context, sol_files)
+            suggestions_list = [s.strip() for s in sol_suggestions.split("\n") if s.strip()]
+            priors_list = [p.strip() for p in sol_priors.split("\n") if p.strip()] if sol_priors else []
+            
+            response = run_zeus_ui(sol_prompt, "solution", constraints_list, sol_context, sol_files, suggestions_list, priors_list)
             
             if response:
                 st.session_state.sol_response = response

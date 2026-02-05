@@ -304,6 +304,8 @@ async def run_zeus(
     mode: str,
     constraints: list[str] | None = None,
     context: str | dict | None = None,
+    human_suggestions: list[str] | None = None,
+    prior_solutions: list[str] | None = None,
     api_key: str | None = None,
     model: str | None = None,
     on_progress: Callable[[str], None] | None = None,
@@ -318,6 +320,8 @@ async def run_zeus(
         mode: "brief" or "solution".
         constraints: Optional list of constraints.
         context: Optional context.
+        human_suggestions: Optional list of human suggestions.
+        prior_solutions: Optional list of prior solution contents.
         api_key: Optional API key (uses env var if not provided).
         model: Optional model override.
         on_progress: Optional progress callback.
@@ -333,6 +337,8 @@ async def run_zeus(
         mode=mode,
         constraints=constraints or [],
         context=context,
+        human_suggestions=human_suggestions or [],
+        prior_solutions=prior_solutions or [],
     )
 
     # Build budget config with any overrides

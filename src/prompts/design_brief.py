@@ -72,6 +72,12 @@ OUTPUT SPECIFICATION:
 CONTEXT:
 {context}
 
+HUMAN SUGGESTIONS (Optional):
+{human_suggestions}
+
+PRIOR SOLUTIONS TO IMPROVE UPON (Optional):
+{prior_solutions}
+
 PLAN TO FOLLOW:
 {plan}
 
@@ -91,7 +97,9 @@ Also return structured metadata:
 {{
     "content": "The full Markdown design brief",
     "assumptions": ["List of assumptions made"],
-    "uncertainty_flags": ["Areas of uncertainty or things needing clarification"]
+    "uncertainty_flags": ["Areas of uncertainty or things needing clarification"],
+    "reasoning_trace": "Compressed explanation of key decisions and rationale",
+    "comparison_analysis": "Explicit delta highlighting improvements or regressions to prior solutions or alternatives"
 }}"""
 
     CRITIQUE = """Critique the following Design Brief from multiple perspectives.
@@ -181,17 +189,26 @@ CRITIQUE:
 ORIGINAL CONSTRAINTS (must all be preserved):
 {constraints}
 
+HUMAN SUGGESTIONS (Optional):
+{human_suggestions}
+
+PRIOR SOLUTIONS (Optional):
+{prior_solutions}
+
 Revise the brief to address the critique issues. Focus on:
 1. Fix all blocker issues
 2. Address major issues where possible
 3. Ensure ALL original constraints are preserved
 4. Keep assumptions and uncertainty flags updated
+5. Ensure prior solutions improvements are maintained or justified
 
 Return:
 {{
     "content": "The revised Markdown design brief",
     "assumptions": ["Updated list of assumptions"],
-    "uncertainty_flags": ["Updated areas of uncertainty"]
+    "uncertainty_flags": ["Updated areas of uncertainty"],
+    "reasoning_trace": "Updated compressed explanation of key decisions and rationale",
+    "comparison_analysis": "Updated explicit delta highlighting improvements or regressions"
 }}"""
 
     @classmethod
