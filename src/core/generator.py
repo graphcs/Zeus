@@ -1,6 +1,7 @@
 """Generator - LLM-based generation of candidates."""
 
 import json
+import re
 from src.models.schemas import NormalizedProblem, Plan, Candidate, Critique
 from src.llm.openrouter import OpenRouterClient
 from src.prompts.design_brief import DesignBriefPrompts
@@ -50,12 +51,54 @@ class Generator:
             plan=plan_str,
         )
 
-        response, usage = await self.llm.generate_json(
-            prompt=prompt,
-            system=prompts.SYSTEM,
-            temperature=0.7,
-            max_tokens=8192,  # Larger output for comprehensive content
-        )
+        if mode == "solution":
+            # Two-step generation for Solution mode to ensure robustness
+            
+            # Step 1: Content
+            content_prompt = prompt + "\n\nCRITICAL INSTRUCTION: Output ONLY the Markdown content for the solution. Do not include JSON metadata."
+            content_response, usage_1 = await self.llm.generate(
+                prompt=content_prompt,
+                system=prompts.SYSTEM,
+                temperature=0.7,
+                max_tokens=8192,
+            )
+            
+            # Step 2: Metadata Extraction
+            extract_prompt = f"""Analyze the Solution content above and extract the following metadata in JSON format:
+{{
+    "assumptions": ["List of assumptions made"],
+    "uncertainty_flags": ["Areas of uncertainty or decisions deferred"],
+    "reasoning_trace": "Compressed explanation of key decisions and rationale",
+    "comparison_analysis": "Explicit delta highlighting improvements or regressions to prior solutions or alternatives"
+}}
+
+SOLUTION CONTENT:
+{content_response[:20000]}  # Truncated if too long
+"""
+            metadata_response, usage_2 = await self.llm.generate_json(
+                prompt=extract_prompt,
+                system="You are a data extractor.",
+                temperature=0.3,
+            )
+
+            response = {
+                "content": content_response,
+                **metadata_response
+            }
+            
+            # Combine usage
+            usage = {
+                "tokens_in": usage_1.get("tokens_in", 0) + usage_2.get("tokens_in", 0),
+                "tokens_out": usage_1.get("tokens_out", 0) + usage_2.get("tokens_out", 0),
+            }
+
+        else:
+            response, usage = await self.llm.generate_json(
+                prompt=prompt,
+                system=prompts.SYSTEM,
+                temperature=0.7,
+                max_tokens=8192,  # Larger output for comprehensive content
+            )
 
         candidate = Candidate(
             content=response.get("content", ""),
@@ -64,6 +107,7 @@ class Generator:
             reasoning_trace=response.get("reasoning_trace", ""),
             comparison_analysis=response.get("comparison_analysis", ""),
         )
+
 
         return candidate, usage
 
@@ -103,12 +147,55 @@ class Generator:
             prior_solutions=prior_solutions_str,
         )
 
-        response, usage = await self.llm.generate_json(
-            prompt=prompt,
-            system=prompts.SYSTEM,
-            temperature=0.7,
-            max_tokens=8192,
-        )
+        if mode == "solution":
+             # Two-step generation for Solution mode to ensure robustness
+            
+            # Step 1: Content (Revised)
+            content_prompt = prompt + "\n\nCRITICAL INSTRUCTION: Output ONLY the revised Markdown content for the solution. Do not include JSON metadata."
+            content_response, usage_1 = await self.llm.generate(
+                prompt=content_prompt,
+                system=prompts.SYSTEM,
+                temperature=0.7,
+                max_tokens=8192,
+            )
+            
+            # Step 2: Metadata Extraction (Revised)
+            extract_prompt = f"""Analyze the Revised Solution content above and extract the following metadata in JSON format.
+Ensure you update the reasoning trace and comparison analysis based on the revision.
+
+{{
+    "assumptions": ["Updated list of assumptions"],
+    "uncertainty_flags": ["Updated areas of uncertainty"],
+    "reasoning_trace": "Updated compressed explanation of key decisions and rationale",
+    "comparison_analysis": "Updated explicit delta highlighting improvements or regressions"
+}}
+
+REVISED SOLUTION CONTENT:
+{content_response[:20000]}
+"""
+            metadata_response, usage_2 = await self.llm.generate_json(
+                prompt=extract_prompt,
+                system="You are a data extractor.",
+                temperature=0.3,
+            )
+
+            response = {
+                "content": content_response,
+                **metadata_response
+            }
+            
+            # Combine usage
+            usage = {
+                "tokens_in": usage_1.get("tokens_in", 0) + usage_2.get("tokens_in", 0),
+                "tokens_out": usage_1.get("tokens_out", 0) + usage_2.get("tokens_out", 0),
+            }
+        else:
+            response, usage = await self.llm.generate_json(
+                prompt=prompt,
+                system=prompts.SYSTEM,
+                temperature=0.7,
+                max_tokens=8192,
+            )
 
         revised = Candidate(
             content=response.get("content", candidate.content),

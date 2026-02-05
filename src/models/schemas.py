@@ -208,11 +208,11 @@ class BudgetConfig(BaseModel):
     - ZEUS_TOTAL_RUN_TIMEOUT
     """
     max_llm_calls: int = Field(
-        default_factory=lambda: _env_int("ZEUS_MAX_LLM_CALLS", 6),
+        default_factory=lambda: _env_int("ZEUS_MAX_LLM_CALLS", 8),
         description="Hard cap on LLM calls (default: 6 for full pipeline)"
     )
     target_llm_calls: int = Field(
-        default_factory=lambda: _env_int("ZEUS_TARGET_LLM_CALLS", 4),
+        default_factory=lambda: _env_int("ZEUS_TARGET_LLM_CALLS", 6),
         description="Soft target for LLM calls"
     )
     max_revisions: int = Field(
@@ -224,7 +224,7 @@ class BudgetConfig(BaseModel):
         description="Timeout per LLM call in seconds"
     )
     total_run_timeout: float = Field(
-        default_factory=lambda: _env_float("ZEUS_TOTAL_RUN_TIMEOUT", 300.0),
+        default_factory=lambda: _env_float("ZEUS_TOTAL_RUN_TIMEOUT", 900.0),
         description="Total run timeout in seconds (5 min default)"
     )
 

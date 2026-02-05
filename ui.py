@@ -17,8 +17,8 @@ st.title("Zeus - Design Team Agent")
 with st.sidebar:  
     st.toggle("Advanced Budget Settings", key="show_budget")
     if st.session_state.get("show_budget"):
-        max_llm_calls = st.number_input("Max LLM Calls", value=6, min_value=1)
-        total_timeout = st.number_input("Total Timeout (s)", value=300, min_value=60)
+        max_llm_calls = st.number_input("Max LLM Calls", value=8, min_value=1)
+        total_timeout = st.number_input("Total Timeout (s)", value=900, min_value=60)
     else:
         max_llm_calls = None
         total_timeout = None

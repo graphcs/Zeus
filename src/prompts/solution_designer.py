@@ -105,15 +105,7 @@ Generate the Target Solution in Markdown format with these sections:
 13. **Assumptions** - What was assumed
 14. **Risks & Mitigations** - Identified risks and proposed mitigations
 15. **Open Questions** - Unresolved items needing decisions
-
-Return structured metadata:
-{{
-    "content": "The full Markdown target solution",
-    "assumptions": ["List of assumptions made"],
-    "uncertainty_flags": ["Areas of uncertainty or decisions deferred"],
-    "reasoning_trace": "Compressed explanation of key decisions and rationale",
-    "comparison_analysis": "Explicit delta highlighting improvements or regressions to prior solutions or alternatives"
-}}"""
+"""
 
     CRITIQUE = """Critique the following Target Solution from multiple expert perspectives.
 
@@ -221,15 +213,7 @@ Revise the solution to address the critique issues. Focus on:
 4. Update assumptions and uncertainty flags
 5. Strengthen areas identified as weak
 6. Ensure improvements over prior solutions are maintained or justified
-
-Return:
-{{
-    "content": "The revised Markdown target solution",
-    "assumptions": ["Updated list of assumptions"],
-    "uncertainty_flags": ["Updated areas of uncertainty"],
-    "reasoning_trace": "Updated compressed explanation of key decisions and rationale",
-    "comparison_analysis": "Updated explicit delta highlighting improvements or regressions"
-}}"""
+"""
 
     @classmethod
     def get_version_info(cls) -> dict:
