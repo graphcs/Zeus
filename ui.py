@@ -343,31 +343,38 @@ def run_zeus_ui(prompt, mode, constraints, context, file_uploads, human_suggesti
 
     combined_context = "\n\n".join(context_parts) if context_parts else None
     
-    status_container = st.empty()
-    
     async def _run():
-        def on_progress(msg):
-            status_container.info(f"🚀 {msg}")
+        with st.status("**Initializing Zeus Agent...**", expanded=True) as status:
+            def on_progress(msg):
+                status.update(label=f"**Zeus:** {msg}", state="running")
+                status.write(f"_{msg}_")
             
-        return await run_zeus(
-            prompt=prompt,
-            mode=mode,
-            constraints=constraints,
-            context=combined_context,
-            human_suggestions=human_suggestions,
-            prior_solutions=prior_solutions,
-            model=None,
-            on_progress=on_progress,
-            max_llm_calls=max_llm_calls,
-            total_run_timeout=total_timeout
-        )
+            try:
+                result = await run_zeus(
+                    prompt=prompt,
+                    mode=mode,
+                    constraints=constraints,
+                    context=combined_context,
+                    human_suggestions=human_suggestions,
+                    prior_solutions=prior_solutions,
+                    model=None,
+                    on_progress=on_progress,
+                    max_llm_calls=max_llm_calls,
+                    total_run_timeout=total_timeout
+                )
+                
+                status.update(label="✅ **Generation Complete!**", state="complete", expanded=False)
+                return result
+            except Exception as e:
+                status.update(label="❌ **Error during execution**", state="error", expanded=True)
+                status.error(str(e))
+                raise e
 
     try:
         response = asyncio.run(_run())
-        status_container.empty()
         return response
     except Exception as e:
-        status_container.error(f"Error: {e}")
+        # Error is already shown in the status container
         return None
 
 tab1, tab2, tab3 = st.tabs(["Design Brief", "Target Solution", "History"])

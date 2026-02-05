@@ -181,6 +181,7 @@ class RunController:
             record.normalized_problem,
             record.plan,
             request.mode,
+            on_progress=self.on_progress,
         )
         self._update_budget(record, usage)
 
@@ -209,6 +210,7 @@ class RunController:
                     record.critique_v1,
                     record.normalized_problem,
                     request.mode,
+                    on_progress=self.on_progress,
                 )
                 self._update_budget(record, usage)
 

@@ -2,6 +2,7 @@
 
 import json
 import re
+from typing import Callable, Optional
 from src.models.schemas import NormalizedProblem, Plan, Candidate, Critique
 from src.llm.openrouter import OpenRouterClient
 from src.prompts.design_brief import DesignBriefPrompts
@@ -20,6 +21,7 @@ class Generator:
         problem: NormalizedProblem,
         plan: Plan,
         mode: str,
+        on_progress: Optional[Callable[[str], None]] = None,
     ) -> tuple[Candidate, dict[str, int]]:
         """Generate a candidate design brief or solution.
 
@@ -27,10 +29,14 @@ class Generator:
             problem: The normalized problem.
             plan: The generation plan.
             mode: "brief" or "solution".
+            on_progress: Optional callback for progress updates.
 
         Returns:
             Tuple of (Candidate, usage_stats).
         """
+        if on_progress is None:
+            on_progress = lambda msg: None
+            
         prompts = DesignBriefPrompts if mode == "brief" else SolutionDesignerPrompts
 
         # Format inputs
@@ -55,6 +61,7 @@ class Generator:
             # Two-step generation for Solution mode to ensure robustness
             
             # Step 1: Content
+            on_progress("Generating Solution Content (Markdown)... This may take a minute.")
             content_prompt = prompt + "\n\nCRITICAL INSTRUCTION: Output ONLY the Markdown content for the solution. Do not include JSON metadata."
             content_response, usage_1 = await self.llm.generate(
                 prompt=content_prompt,
@@ -64,6 +71,7 @@ class Generator:
             )
             
             # Step 2: Metadata Extraction
+            on_progress("Extracting structured metadata and analysis...")
             extract_prompt = f"""Analyze the Solution content above and extract the following metadata in JSON format:
 {{
     "assumptions": ["List of assumptions made"],
@@ -117,6 +125,7 @@ SOLUTION CONTENT:
         critique: Critique,
         problem: NormalizedProblem,
         mode: str,
+        on_progress: Optional[Callable[[str], None]] = None,
     ) -> tuple[Candidate, dict[str, int]]:
         """Revise a candidate based on critique feedback.
 
@@ -125,10 +134,14 @@ SOLUTION CONTENT:
             critique: The critique to address.
             problem: The normalized problem.
             mode: "brief" or "solution".
+            on_progress: Optional callback for progress updates.
 
         Returns:
             Tuple of (revised Candidate, usage_stats).
         """
+        if on_progress is None:
+            on_progress = lambda msg: None
+
         prompts = DesignBriefPrompts if mode == "brief" else SolutionDesignerPrompts
 
         constraints_str = "\n".join(f"- {c}" for c in problem.constraints) if problem.constraints else "None"
@@ -151,6 +164,7 @@ SOLUTION CONTENT:
              # Two-step generation for Solution mode to ensure robustness
             
             # Step 1: Content (Revised)
+            on_progress("Drafting revised solution content...")
             content_prompt = prompt + "\n\nCRITICAL INSTRUCTION: Output ONLY the revised Markdown content for the solution. Do not include JSON metadata."
             content_response, usage_1 = await self.llm.generate(
                 prompt=content_prompt,
@@ -160,6 +174,7 @@ SOLUTION CONTENT:
             )
             
             # Step 2: Metadata Extraction (Revised)
+            on_progress("Updating analysis and metadata...")
             extract_prompt = f"""Analyze the Revised Solution content above and extract the following metadata in JSON format.
 Ensure you update the reasoning trace and comparison analysis based on the revision.
 
