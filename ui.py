@@ -17,7 +17,7 @@ st.title("Zeus - Design Team Agent")
 with st.sidebar:  
     st.toggle("Advanced Budget Settings", key="show_budget")
     if st.session_state.get("show_budget"):
-        max_llm_calls = st.number_input("Max LLM Calls", value=8, min_value=1)
+        max_llm_calls = st.number_input("Max LLM Calls", value=11, min_value=1)
         total_timeout = st.number_input("Total Timeout (s)", value=900, min_value=60)
     else:
         max_llm_calls = None
@@ -173,6 +173,9 @@ def format_evaluation_summary(response) -> str:
                     lines.append(f"- {sev_icon} **[{issue.severity.upper()}]** {issue.description}\n")
             else:
                 lines.append("- ✨ No new issues found\n")
+
+            if review.fix_suggestions:
+                lines.append(f"- ✅ Fix Suggestion: {review.fix_suggestions}\n")
 
         if pool.synthesis:
             syn = pool.synthesis
@@ -355,7 +358,7 @@ def display_response(response):
                     else:
                         st.markdown("✨ No new issues found")
                     if review.fix_suggestions:
-                        st.caption(f"Fix: {review.fix_suggestions}")
+                        st.success(f"Fix: {review.fix_suggestions}")
 
             if pool.synthesis:
                 syn = pool.synthesis
