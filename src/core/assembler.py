@@ -6,6 +6,7 @@ from src.models.schemas import (
     ZeusResponse,
     RunRecord,
     UsageStats,
+    AgentPoolResult,
 )
 from src.core.evaluator import EvaluationEngine, TradeoffExtractor
 
@@ -76,8 +77,8 @@ class Assembler:
         - known_issues[] is always present (may be empty)
         - confidence, coverage_score, and tradeoffs computed (V1)
         """
-        # Use the latest candidate (v2 if exists, else v1)
-        final_candidate = record.candidate_v2 or record.candidate_v1
+        # Use the latest candidate: V4 synthesized > v2 > v1
+        final_candidate = self._resolve_final_candidate(record)
         final_critique = record.critique_v2 or record.critique_v1
 
         # Calculate usage stats
@@ -136,6 +137,8 @@ class Assembler:
             evaluation_summary=eval_summary.model_dump(),  # Include complete evaluation summary
             # V3 fields
             verification_report=record.verification_report,
+            # V4 fields
+            agent_pool_result=self._build_agent_pool_result(record),
         )
 
     def _format_output(self, candidate: Candidate, record: RunRecord) -> str:
@@ -150,6 +153,41 @@ class Assembler:
                 output_parts.append(f"- {flag}\n")
 
         return "".join(output_parts)
+
+    @staticmethod
+    def _resolve_final_candidate(record: RunRecord) -> Candidate | None:
+        """Resolve the best candidate: V4 synthesis > v2 revision > v1 initial.
+
+        Args:
+            record: The run record.
+
+        Returns:
+            The best available candidate, or None.
+        """
+        # V4: If synthesis produced a revised candidate, prefer it
+        if record.synthesis_result and record.synthesis_result.revised_candidate:
+            return record.synthesis_result.revised_candidate
+        return record.candidate_v2 or record.candidate_v1
+
+    @staticmethod
+    def _build_agent_pool_result(record: RunRecord) -> AgentPoolResult | None:
+        """Build the V4 AgentPoolResult from run record artifacts.
+
+        Args:
+            record: The run record.
+
+        Returns:
+            AgentPoolResult if V4 ran, else None.
+        """
+        if not record.specialist_reviews:
+            return None
+
+        return AgentPoolResult(
+            specialist_reviews=record.specialist_reviews,
+            synthesis=record.synthesis_result,
+            blackboard_summary=record.blackboard_summary or {},
+            specialists_run=[r.specialist for r in record.specialist_reviews],
+        )
 
     def _collect_known_issues(self, record: RunRecord) -> list[str]:
         """Collect known issues from critiques."""

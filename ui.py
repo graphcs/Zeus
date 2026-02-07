@@ -158,7 +158,37 @@ def format_evaluation_summary(response) -> str:
         lines.append("The following design tradeoffs were identified:\n\n")
         for tradeoff in response.tradeoffs:
             lines.append(f"- {tradeoff}\n")
-    
+
+    # V4 Agent Pool Results
+    if hasattr(response, 'agent_pool_result') and response.agent_pool_result:
+        pool = response.agent_pool_result
+        lines.append("\n### 🤖 V4 Agent Pool\n")
+        lines.append(f"**Specialists Run:** {', '.join(pool.specialists_run)}\n\n")
+
+        for review in pool.specialist_reviews:
+            lines.append(f"#### {review.specialist}\n")
+            if review.new_issues:
+                for issue in review.new_issues:
+                    sev_icon = {"blocker": "🚫", "major": "⚠️", "minor": "ℹ️"}.get(issue.severity, "•")
+                    lines.append(f"- {sev_icon} **[{issue.severity.upper()}]** {issue.description}\n")
+            else:
+                lines.append("- ✨ No new issues found\n")
+
+        if pool.synthesis:
+            syn = pool.synthesis
+            lines.append(f"\n**Synthesis:** Resolved {len(syn.resolved_issue_indices)} issues\n")
+            if syn.resolution_notes:
+                lines.append(f"> {syn.resolution_notes}\n")
+
+        bb = pool.blackboard_summary
+        if bb:
+            lines.append(
+                f"\n📋 **Blackboard:** {bb.get('total_issues', 0)} total · "
+                f"{bb.get('resolved', 0)} resolved · "
+                f"{bb.get('open', 0)} open · "
+                f"{bb.get('deferred', 0)} deferred\n"
+            )
+
     # Usage stats
     if response.usage:
         lines.append("\n### Resource Usage\n")
@@ -308,6 +338,38 @@ def display_response(response):
          with st.container(border=True):
             for i in response.known_issues:
                 st.markdown(f"• {i}")
+
+    # V4 Agent Pool
+    if hasattr(response, 'agent_pool_result') and response.agent_pool_result:
+        pool = response.agent_pool_result
+        st.markdown("### 🤖 Agent Pool (V4)")
+        with st.container(border=True):
+            st.markdown(f"**Specialists Run:** {', '.join(pool.specialists_run)}")
+
+            for review in pool.specialist_reviews:
+                with st.expander(f"🔍 {review.specialist}"):
+                    if review.new_issues:
+                        for issue in review.new_issues:
+                            sev_icon = {"blocker": "🚫", "major": "⚠️", "minor": "ℹ️"}.get(issue.severity, "•")
+                            st.markdown(f"{sev_icon} **[{issue.severity.upper()}]** {issue.description}")
+                    else:
+                        st.markdown("✨ No new issues found")
+                    if review.fix_suggestions:
+                        st.caption(f"Fix: {review.fix_suggestions}")
+
+            if pool.synthesis:
+                syn = pool.synthesis
+                st.markdown(f"**Synthesis:** Resolved {len(syn.resolved_issue_indices)} issues")
+                if syn.resolution_notes:
+                    st.info(syn.resolution_notes)
+
+            bb = pool.blackboard_summary
+            if bb:
+                cols = st.columns(4)
+                cols[0].metric("Total Issues", bb.get("total_issues", 0))
+                cols[1].metric("Resolved", bb.get("resolved", 0))
+                cols[2].metric("Open", bb.get("open", 0))
+                cols[3].metric("Deferred", bb.get("deferred", 0))
 
     # 6. Usage
     if response.usage:

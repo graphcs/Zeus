@@ -11,8 +11,13 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
-from src.models.schemas import UsageStats, VerificationReport, StructuredKnownIssue
-from src.models.schemas import UsageStats, RegressionDelta
+from src.models.schemas import (
+    UsageStats,
+    VerificationReport,
+    StructuredKnownIssue,
+    RegressionDelta,
+    AgentPoolResult,
+)
 from src.utils.read_file import read_file_content as read_file_utils
 from dotenv import load_dotenv
 
@@ -42,8 +47,9 @@ def print_response(
     regression_analysis: RegressionDelta | None = None,
     reasoning_trace: str | None = None,
     comparison_analysis: str | None = None,
+    agent_pool_result: AgentPoolResult | None = None,
 ) -> None:
-    """Print the Zeus response in a formatted way with V1 evaluation signals.
+    """Print the Zeus response in a formatted way with V1-V4 signals.
     
     Args:
         output: Main output content
@@ -60,6 +66,7 @@ def print_response(
         regression_analysis: V2 regression analysis
         reasoning_trace: Compressed reasoning trace
         comparison_analysis: Comparison to alternative solutions
+        agent_pool_result: V4 agent pool results
     """
     # Main output
     console.print(Markdown(output))
@@ -246,6 +253,55 @@ def print_response(
             border_style="yellow",
         ))
 
+    # V4: Agent Pool Results
+    if agent_pool_result:
+        console.print()
+        pool_lines: list[str] = []
+        pool_lines.append(
+            f"[bold]Specialists Run:[/bold] {', '.join(agent_pool_result.specialists_run)}"
+        )
+
+        for review in agent_pool_result.specialist_reviews:
+            pool_lines.append(f"\n[bold cyan]{review.specialist}[/bold cyan]")
+            if review.new_issues:
+                for issue in review.new_issues:
+                    sev_icon = {"blocker": "🚫", "major": "⚠️", "minor": "ℹ️"}.get(
+                        issue.severity, "•"
+                    )
+                    pool_lines.append(
+                        f"  {sev_icon} [{issue.severity.upper()}] {issue.description}"
+                    )
+            else:
+                pool_lines.append("  ✨ No new issues found")
+            if review.fix_suggestions:
+                pool_lines.append(f"  [dim]Fix: {review.fix_suggestions[:120]}...[/dim]")
+
+        # Synthesis summary
+        if agent_pool_result.synthesis:
+            syn = agent_pool_result.synthesis
+            pool_lines.append(f"\n[bold green]Synthesis:[/bold green]")
+            pool_lines.append(
+                f"  Resolved {len(syn.resolved_issue_indices)} issues"
+            )
+            if syn.resolution_notes:
+                pool_lines.append(f"  [dim]{syn.resolution_notes[:150]}[/dim]")
+
+        # Blackboard stats
+        bb = agent_pool_result.blackboard_summary
+        if bb:
+            pool_lines.append(
+                f"\n📋 Blackboard: {bb.get('total_issues', 0)} total, "
+                f"{bb.get('resolved', 0)} resolved, "
+                f"{bb.get('open', 0)} open, "
+                f"{bb.get('deferred', 0)} deferred"
+            )
+
+        console.print(Panel(
+            "\n".join(pool_lines),
+            title="🤖 V4 Agent Pool",
+            border_style="bright_magenta",
+        ))
+
     # Usage stats
     if usage:
         console.print()
@@ -384,6 +440,7 @@ def brief(
         regression_analysis=getattr(response, "regression_analysis", None),
         reasoning_trace=getattr(response, "reasoning_trace", None),
         comparison_analysis=getattr(response, "comparison_analysis", None),
+        agent_pool_result=getattr(response, "agent_pool_result", None),
     )
 
     if output_file:
@@ -510,6 +567,7 @@ def solution(
         regression_analysis=getattr(response, "regression_analysis", None),
         reasoning_trace=getattr(response, "reasoning_trace", None),
         comparison_analysis=getattr(response, "comparison_analysis", None),
+        agent_pool_result=getattr(response, "agent_pool_result", None),
     )
 
     if output_file:
@@ -599,6 +657,10 @@ def show(
             eval_summary,
             verification_report=getattr(record.final_response, "verification_report", None),
             structured_issues=getattr(record.final_response, "structured_issues", None),
+            regression_analysis=getattr(record.final_response, "regression_analysis", None),
+            reasoning_trace=getattr(record.final_response, "reasoning_trace", None),
+            comparison_analysis=getattr(record.final_response, "comparison_analysis", None),
+            agent_pool_result=getattr(record.final_response, "agent_pool_result", None),
         )
 
 

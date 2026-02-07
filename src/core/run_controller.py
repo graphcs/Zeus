@@ -9,6 +9,7 @@ from src.models.schemas import (
     RunRecord,
     BudgetUsed,
     BudgetConfig,
+    AgentPoolResult,
 )
 from src.llm.openrouter import OpenRouterClient, OpenRouterError, OpenRouterTimeoutError
 from src.core.normalizer import Normalizer
@@ -20,6 +21,9 @@ from src.core.constraint_checker import ConstraintChecker
 from src.core.issue_structurer import IssueStructurer
 from src.core.persistence import Persistence
 from src.core.comparator import Comparator
+from src.core.specialist_reviewer import SpecialistReviewer
+from src.core.synthesizer import Synthesizer
+from src.core.blackboard import Blackboard
 from src.prompts.design_brief import DesignBriefPrompts
 from src.prompts.solution_designer import SolutionDesignerPrompts
 
@@ -77,6 +81,8 @@ class RunController:
         self.assembler = Assembler()
         self.constraint_checker = ConstraintChecker(llm_client)
         self.issue_structurer = IssueStructurer(llm_client)
+        self.specialist_reviewer = SpecialistReviewer(llm_client)
+        self.synthesizer = Synthesizer(llm_client)
 
     async def run(self, request: ZeusRequest) -> ZeusResponse:
         """Execute the full Zeus pipeline.
@@ -271,6 +277,133 @@ class RunController:
                  except BudgetExceededError:
                      record.errors.append("Skipped issue structuring: budget exceeded")
 
+        # Phase 6: V4 Agent Pool — Specialist Reviews + Synthesis
+        await self._run_agent_pool(record)
+
+
+    async def _run_agent_pool(self, record: RunRecord) -> None:
+        """Execute the V4 agent pool phase: specialist reviews + synthesis.
+
+        This phase:
+        1. Builds a blackboard from the current candidate and critique
+        2. Selects and runs specialist reviewers (budget-aware)
+        3. If specialists found actionable issues, runs the synthesizer
+        4. Updates the record with all V4 artifacts
+
+        Args:
+            record: The run record to update.
+        """
+        final_candidate = record.candidate_v2 or record.candidate_v1
+        final_critique = record.critique_v2 or record.critique_v1
+
+        if final_candidate is None or record.normalized_problem is None:
+            return
+
+        remaining_llm_calls = (
+            self.budget_config.max_llm_calls - record.budget_used.llm_calls
+        )
+        if remaining_llm_calls < 1:
+            record.errors.append("Skipped V4 agent pool: no LLM budget remaining")
+            return
+
+        # Step 1: Build blackboard
+        board = Blackboard(
+            candidate=final_candidate,
+            max_specialist_calls=min(3, remaining_llm_calls),
+        )
+        if final_critique:
+            board.add_issues_from_critique(final_critique, source="v1_critic")
+
+        # Step 2: Select specialists
+        specialists_to_run = SpecialistReviewer.select_specialists(board)
+        if not specialists_to_run:
+            self.on_progress("V4: No specialist reviews needed")
+            return
+
+        # Step 3: Run specialist reviews
+        specialist_reviews = []
+        for spec_name in specialists_to_run:
+            # Check both specialist budget and global LLM budget
+            if not board.has_budget:
+                break
+            remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+            if remaining < 1:
+                record.errors.append(
+                    f"Skipped specialist '{spec_name}': global LLM budget exhausted"
+                )
+                break
+
+            self.on_progress(f"V4: Running {spec_name} specialist review...")
+            try:
+                self._check_budget(record, f"specialist_{spec_name}")
+                review, usage = await self.specialist_reviewer.review(
+                    specialist=spec_name,
+                    board=board,
+                    problem=record.normalized_problem,
+                )
+                self._update_budget(record, usage)
+                board.use_specialist_call()
+
+                # Apply specialist findings to the blackboard
+                if review.new_issues:
+                    board.add_specialist_issues(review.new_issues, spec_name)
+                if review.resolved_issue_indices:
+                    board.mark_resolved(
+                        review.resolved_issue_indices,
+                        spec_name,
+                        review.resolution_notes,
+                    )
+
+                specialist_reviews.append(review)
+
+            except BudgetExceededError:
+                record.errors.append(
+                    f"Skipped specialist '{spec_name}': budget exceeded"
+                )
+                break
+            except Exception as e:
+                record.errors.append(
+                    f"Specialist '{spec_name}' failed: {str(e)}"
+                )
+
+        record.specialist_reviews = specialist_reviews
+
+        # Step 4: Synthesis — only if specialists found actionable issues
+        has_actionable = (
+            any(r.new_issues for r in specialist_reviews)
+            or board.open_blockers
+            or board.open_majors
+        )
+        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+        if has_actionable and remaining >= 1:
+            self.on_progress("V4: Synthesizing specialist feedback...")
+            try:
+                self._check_budget(record, "synthesize")
+                synthesis, usage = await self.synthesizer.synthesize(
+                    board=board,
+                    problem=record.normalized_problem,
+                    reviews=specialist_reviews,
+                )
+                self._update_budget(record, usage)
+
+                # Update blackboard with synthesized candidate
+                board.update_candidate(synthesis.revised_candidate, "synthesizer")
+                if synthesis.resolved_issue_indices:
+                    board.mark_resolved(
+                        synthesis.resolved_issue_indices,
+                        "synthesizer",
+                        synthesis.resolution_notes,
+                    )
+
+                record.synthesis_result = synthesis
+
+            except BudgetExceededError:
+                record.errors.append("Skipped synthesis: budget exceeded")
+            except Exception as e:
+                record.errors.append(f"Synthesis failed: {str(e)}")
+
+        # Step 5: Save blackboard summary for traceability
+        record.blackboard_summary = board.summary()
 
     def _check_budget(self, record: RunRecord, phase: str) -> None:
         """Check if budget allows another LLM call.

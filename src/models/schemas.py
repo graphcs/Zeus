@@ -142,6 +142,34 @@ class StructuredKnownIssue(BaseModel):
     verification_step: str = Field(..., description="How to verify the fix or impact")
 
 
+# ============================================================================
+# V4 Agent Pool Models
+# ============================================================================
+
+class SpecialistReview(BaseModel):
+    """Result of a single specialist reviewer pass."""
+    specialist: str = Field(..., description="Specialist name: risk_compliance | evaluation_regression | security_ops")
+    new_issues: list[CritiqueIssue] = Field(default_factory=list, description="New issues discovered by the specialist")
+    resolved_issue_indices: list[int] = Field(default_factory=list, description="Indices of blackboard issues the specialist considers resolved")
+    resolution_notes: str = Field(default="", description="Why existing issues are considered resolved")
+    fix_suggestions: str = Field(default="", description="Concrete suggestions for improvement")
+
+
+class SynthesisResult(BaseModel):
+    """Result of the synthesizer merging specialist feedback."""
+    revised_candidate: Candidate = Field(..., description="The improved candidate after synthesis")
+    resolved_issue_indices: list[int] = Field(default_factory=list, description="Indices of issues resolved during synthesis")
+    resolution_notes: str = Field(default="", description="Summary of what was fixed")
+
+
+class AgentPoolResult(BaseModel):
+    """V4 aggregate result from the specialist agent pool pipeline."""
+    specialist_reviews: list[SpecialistReview] = Field(default_factory=list, description="Reviews from all specialists that ran")
+    synthesis: SynthesisResult | None = Field(default=None, description="Synthesizer output, if synthesis was performed")
+    blackboard_summary: dict = Field(default_factory=dict, description="Snapshot of the blackboard state")
+    specialists_run: list[str] = Field(default_factory=list, description="Names of specialists that were invoked")
+
+
 class UsageStats(BaseModel):
     """Token usage and cost statistics for a run."""
     llm_calls: int = Field(default=0, description="Number of LLM calls made")
@@ -192,6 +220,12 @@ class ZeusResponse(BaseModel):
         description="V2 Regression analysis against baseline"
     )
 
+    # V4 Agent Pool Signals
+    agent_pool_result: AgentPoolResult | None = Field(
+        default=None,
+        description="V4 Agent pool specialist reviews and synthesis result"
+    )
+
 
 # ============================================================================
 # Traceability Models
@@ -208,7 +242,7 @@ class BudgetConfig(BaseModel):
     - ZEUS_TOTAL_RUN_TIMEOUT
     """
     max_llm_calls: int = Field(
-        default_factory=lambda: _env_int("ZEUS_MAX_LLM_CALLS", 8),
+        default_factory=lambda: _env_int("ZEUS_MAX_LLM_CALLS", 15),
         description="Hard cap on LLM calls (default: 6 for full pipeline)"
     )
     target_llm_calls: int = Field(
@@ -252,6 +286,10 @@ class RunRecord(BaseModel):
     # V3 Artifacts
     verification_report: VerificationReport | None = None
     structured_issues: list[StructuredKnownIssue] | None = None
+    # V4 Artifacts
+    specialist_reviews: list[SpecialistReview] | None = None
+    synthesis_result: SynthesisResult | None = None
+    blackboard_summary: dict | None = None
     final_response: ZeusResponse | None = None
     model_version: str = "anthropic/claude-sonnet-4"
     prompt_versions: dict = Field(default_factory=dict)
@@ -264,10 +302,20 @@ class RunRecord(BaseModel):
             return False
         return any(issue.severity == "blocker" for issue in critique.issues)
 
+    def has_blockers_or_majors(self, critique: Critique | None) -> bool:
+        """Check if critique has any blocker or major issues (per MVP spec)."""
+        if critique is None:
+            return False
+        return any(
+            issue.severity in ("blocker", "major") for issue in critique.issues
+        )
+
     def needs_revision(self) -> bool:
-        """Check if revision is needed and allowed."""
-        # Revision needed if blockers exist and we haven't done a revision yet
-        return self.has_blockers(self.critique_v1) and self.candidate_v2 is None
+        """Check if revision is needed and allowed.
+
+        Per MVP spec: revision triggers on blocker OR major issues.
+        """
+        return self.has_blockers_or_majors(self.critique_v1) and self.candidate_v2 is None
 
     def can_revise(self) -> bool:
         """Check if revision budget allows another iteration."""
