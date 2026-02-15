@@ -2,8 +2,11 @@
 
 import os
 import json
+import logging
 import httpx
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class OpenRouterClient:
@@ -80,6 +83,12 @@ class OpenRouterClient:
             "X-Title": "Zeus Design Agent",
         }
 
+        logger.info(f"LLM request → {self.model} | temp={temperature} max_tokens={max_tokens} "
+                     f"json_mode={json_mode} msgs={len(messages)}")
+
+        import time as _time
+        _t0 = _time.monotonic()
+
         try:
             response = await self._client.post(
                 self.BASE_URL,
@@ -96,15 +105,26 @@ class OpenRouterClient:
                 "tokens_out": usage.get("completion_tokens", 0),
             }
 
+            elapsed = _time.monotonic() - _t0
+            logger.info(
+                f"LLM response ← {usage_stats['tokens_in']:,} in / "
+                f"{usage_stats['tokens_out']:,} out tokens "
+                f"({elapsed:.1f}s)"
+            )
+
             return content, usage_stats
 
         except httpx.TimeoutException as e:
+            logger.error(f"LLM timeout after {self.timeout}s: {e}")
             raise OpenRouterTimeoutError(f"Request timed out after {self.timeout}s: {str(e)}") from e
         except httpx.HTTPStatusError as e:
+            logger.error(f"LLM HTTP error {e.response.status_code}: {e.response.text[:200]}")
             raise OpenRouterError(f"API request failed: {e.response.status_code} - {e.response.text}") from e
         except httpx.RequestError as e:
+            logger.error(f"LLM request error: {e}")
             raise OpenRouterError(f"Request failed: {str(e)}") from e
         except (KeyError, IndexError, json.JSONDecodeError) as e:
+            logger.error(f"LLM response parse error: {e}")
             raise OpenRouterError(f"Invalid response format: {str(e)}") from e
 
     async def generate_json(
@@ -146,6 +166,7 @@ class OpenRouterClient:
             parse_error = e
 
         # Repair pass: ask LLM to fix the malformed JSON
+        logger.warning(f"JSON parse failed — attempting LLM repair pass: {parse_error}")
         repair_prompt = self._build_repair_prompt(content, str(parse_error))
 
         try:
