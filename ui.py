@@ -183,6 +183,95 @@ hr {border-color: #2a2b45 !important;}
     border-radius: 4px; color: #7878a0; font-size: 13px;
 }
 .page-num.active {background: #4A7BF7; color: white;}
+
+.live-indicator {
+    color: #4ade80;
+    font-weight: 600;
+}
+
+.status-card {
+    background: #242540;
+    border: 1px solid #2a2b45;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-top: 8px;
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-title {
+    color: #E8E8ED;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status-subtitle {
+    color: #9898b0;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.status-meta {
+    color: #7878a0;
+    font-size: 12px;
+}
+
+.pulse-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pulse-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #4ade80;
+    opacity: 0.25;
+    animation: zeus-pulse 1.2s infinite ease-in-out;
+}
+
+.pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+.pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes zeus-pulse {
+    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-1px); }
+}
+
+.step-track {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.step-pill {
+    border: 1px solid #2a2b45;
+    border-radius: 999px;
+    font-size: 11px;
+    padding: 3px 8px;
+    color: #6868a0;
+}
+
+.step-pill.done {
+    border-color: #4A7BF7;
+    color: #4A7BF7;
+}
+
+.step-pill.active {
+    border-color: #4ade80;
+    color: #E8E8ED;
+    background: #1e1f38;
+}
 </style>""", unsafe_allow_html=True)
 
 # ============================================================================
@@ -195,6 +284,7 @@ _defaults = {
     "current_response": None,
     "run_error": None,
     "run_warning": None,
+    "run_budget_stop": None,
     "history_page": 1,
     "notes": {},                # run_id -> note text
     "favorites": set(),         # set of run_ids
@@ -207,10 +297,26 @@ _defaults = {
     "prompt_text": "",
     "constraints_text": "",
     "objectives_text": "",
+    "_reset_requested": False,
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# Apply deferred reset before widgets with bound keys are instantiated.
+if st.session_state.get("_reset_requested"):
+    st.session_state.uploaded_files = []
+    st.session_state.current_response = None
+    st.session_state.prompt_text = ""
+    st.session_state.constraints_text = ""
+    st.session_state.objectives_text = ""
+    st.session_state.run_error = None
+    st.session_state.run_warning = None
+    st.session_state.run_budget_stop = None
+    st.session_state["_final_logs"] = []
+    st.session_state.pop("_constraints", None)
+    st.session_state.pop("_objectives", None)
+    st.session_state["_reset_requested"] = False
 
 # ============================================================================
 # Constants
@@ -226,6 +332,29 @@ PHASE_PROGRESS = {
     "Phase 6": 0.92,
     "Assembling": 0.96,
     "Saving": 0.99,
+}
+
+PIPELINE_STEPS = [
+    "Phase 0",
+    "Phase 1",
+    "Phase 2",
+    "Phase 3",
+    "Phase 4",
+    "Phase 5",
+    "Phase 6",
+    "Saving",
+]
+
+STEP_DESCRIPTIONS = {
+    "Starting": "Preparing Zeus pipeline and validating run settings.",
+    "Phase 0": "Normalizing your input into a structured problem brief.",
+    "Phase 1": "Running parallel inventors to generate diverse solution drafts.",
+    "Phase 2": "Cross-pollinating inventor ideas to surface stronger options.",
+    "Phase 3": "Synthesizing inventor outputs into one unified draft.",
+    "Phase 4": "Critiquing draft quality using library-informed checks.",
+    "Phase 5": "Refining the draft to address major critique findings.",
+    "Phase 6": "Assembling deliverables and evaluation scorecard.",
+    "Saving": "Persisting run record and final artifacts.",
 }
 
 DELIVERABLES = [
@@ -325,6 +454,7 @@ if not hasattr(threading, "_zeus_state"):
         "response": None,
         "error": None,
         "warning": None,
+        "budget_stop": None,
         "done": False,
         "logs": [],  # list of (timestamp_str, level, message)
     }
@@ -349,7 +479,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
     _thread_state.update({
         "active": True, "msg": "Starting...", "pct": 0.0,
         "start_time": time.time(), "response": None,
-        "error": None, "warning": None, "done": False, "logs": [],
+        "error": None, "warning": None, "budget_stop": None, "done": False, "logs": [],
     })
 
     handler = None
@@ -414,19 +544,26 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
             i for i in (response.known_issues or [])
             if any(i.startswith(p) for p in _error_prefixes)
         ]
-        if real_errors:
-            # If we still got usable output (score > 0, deliverables present),
-            # treat as a warning rather than a hard failure.
-            has_output = response.total_score > 0 and bool(response.output)
+        budget_errors = [i for i in real_errors if i.startswith("Budget exceeded:")]
+        non_budget_errors = [i for i in real_errors if not i.startswith("Budget exceeded:")]
+
+        if budget_errors:
+            _thread_state["budget_stop"] = "; ".join(budget_errors)
+            for err in budget_errors:
+                _log(f"Run stopped by budget limit: {err}", "WARNING")
+
+        if non_budget_errors:
+            # If we still got usable output, treat as warning rather than hard failure.
+            has_output = bool(response and response.output and response.output.strip())
             if has_output:
-                _thread_state["warning"] = "; ".join(real_errors)
-                for err in real_errors:
+                _thread_state["warning"] = "; ".join(non_budget_errors)
+                for err in non_budget_errors:
                     _log(f"Pipeline warning: {err} (output still produced)", "WARNING")
             else:
-                _thread_state["error"] = "; ".join(real_errors)
-                for err in real_errors:
+                _thread_state["error"] = "; ".join(non_budget_errors)
+                for err in non_budget_errors:
                     _log(f"Pipeline error: {err}", "ERROR")
-        if response.disqualified and not real_errors:
+        if response.disqualified and not non_budget_errors and not budget_errors:
             _log("Note: solution was disqualified by evaluation scorecard", "WARNING")
     except Exception as e:
         tb = traceback.format_exc()
@@ -463,6 +600,31 @@ def _make_outputs_zip(response):
                 zf.writestr(f"{field}.md", content)
         zf.writestr("full_output.md", response.output)
     return buf.getvalue()
+
+
+def _get_current_step(msg: str) -> str:
+    """Extract a concise pipeline step from progress message."""
+    if not msg:
+        return "Starting"
+
+    for step in PIPELINE_STEPS:
+        if step in msg:
+            return step
+    return "Starting"
+
+
+def _get_step_description(step: str) -> str:
+    """Get human-friendly description for the current pipeline step."""
+    return STEP_DESCRIPTIONS.get(step, "Zeus is actively processing your request.")
+
+
+def _render_scrollable_logs(logs: list[tuple[str, str, str]]) -> None:
+    """Render logs in a fixed-height, scrollable panel."""
+    if not logs:
+        return
+    log_text = "\n".join(f"[{ts}] {lvl:5s}  {m}" for ts, lvl, m in logs)
+    with st.container(height=280):
+        st.code(log_text, language="log", wrap_lines=True)
 
 
 # ============================================================================
@@ -562,6 +724,8 @@ def show_progress():
             st.session_state.current_response = _thread_state["response"]
             for f in st.session_state.uploaded_files:
                 f["status"] = "processed"
+        if _thread_state.get("budget_stop"):
+            st.session_state.run_budget_stop = _thread_state["budget_stop"]
         if _thread_state.get("error"):
             st.session_state.run_error = _thread_state["error"]
         if _thread_state.get("warning"):
@@ -587,21 +751,60 @@ def show_progress():
 
     pct = _thread_state.get("pct", 0.0)
     msg = _thread_state.get("msg", "Starting...")
+    current_step = _get_current_step(msg)
+    step_description = _get_step_description(current_step)
     elapsed = time.time() - _thread_state.get("start_time", time.time())
 
     st.progress(pct)
 
-    icol1, icol2 = st.columns([6, 1])
-    with icol1:
-        st.caption(f"{msg} — {format_elapsed(elapsed)} elapsed")
-    with icol2:
-        st.caption(f"{int(pct * 100)}%")
+
+    heartbeat = datetime.now().strftime("%H:%M:%S")
+    if current_step in PIPELINE_STEPS:
+        active_idx = PIPELINE_STEPS.index(current_step)
+    else:
+        active_idx = -1
+
+    step_labels = {
+        "Phase 0": "P0 Intake",
+        "Phase 1": "P1 Inventors",
+        "Phase 2": "P2 Cross",
+        "Phase 3": "P3 Synthesis",
+        "Phase 4": "P4 Critique",
+        "Phase 5": "P5 Refine",
+        "Phase 6": "P6 Assembly",
+        "Saving": "Saving",
+    }
+
+    pills = []
+    for idx, step in enumerate(PIPELINE_STEPS):
+        cls = "step-pill"
+        if idx < active_idx:
+            cls += " done"
+        elif idx == active_idx:
+            cls += " active"
+        label = step_labels.get(step, step)
+        pills.append(f'<span class="{cls}">{label}</span>')
+
+    st.markdown(
+        f'''<div class="status-card">
+<div class="status-row">
+  <div>
+    <div class="status-title">
+      <span class="pulse-group"><span class="pulse-dot"></span><span class="pulse-dot"></span><span class="pulse-dot"></span></span>
+      <span>Current Step: {current_step}</span>
+    </div>
+    <div class="status-subtitle">{step_description}</div>
+  </div>
+  <div class="status-meta">Heartbeat {heartbeat}</div>
+</div>
+<div class="step-track">{"".join(pills)}</div>
+</div>''',
+        unsafe_allow_html=True,
+    )
 
     # Live log
     logs = _thread_state.get("logs", [])
-    if logs:
-        log_text = "\n".join(f"[{ts}] {lvl:5s}  {m}" for ts, lvl, m in logs)
-        st.code(log_text, language="log", wrap_lines=True)
+    _render_scrollable_logs(logs)
 
 
 # ============================================================================
@@ -670,7 +873,7 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 12,
             "max_revisions": 1,
-            "total_timeout": 900,
+            "total_timeout": 1100,
             "desc": "~5-10 min — 2 inventors, 1 refinement pass",
         },
         "Normal": {
@@ -678,7 +881,7 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 30,
             "max_revisions": 3,
-            "total_timeout": 1800,
+            "total_timeout": 2000,
             "desc": "~10-20 min — 4 inventors, up to 3 refinements",
         },
         "Thorough": {
@@ -686,14 +889,14 @@ with st.sidebar:
             "cross_pollinate": True,
             "max_llm_calls": 50,
             "max_revisions": 3,
-            "total_timeout": 1800,
+            "total_timeout": 3600,
             "desc": "~15-25 min — 5 inventors, cross-pollination, full critique",
         },
     }
 
     # Settings
     with st.expander("\u2699\ufe0f Settings", expanded=True):
-        all_modes = list(PRESETS.keys()) + ["Custom"]
+        all_modes = list(PRESETS.keys()) #+ ["Custom"]
         current_idx = all_modes.index(st.session_state.preset) if st.session_state.preset in all_modes else 2
 
         def _apply_preset():
@@ -718,23 +921,23 @@ with st.sidebar:
 
         if chosen in PRESETS:
             st.caption(PRESETS[chosen]["desc"])
-        else:
-            # Custom mode — show all controls
-            st.session_state.num_inventors = st.slider(
-                "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
-            )
-            st.session_state.max_revisions = st.slider(
-                "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
-            )
-            st.session_state.cross_pollinate = st.toggle(
-                "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
-            )
-            st.session_state.max_llm_calls = st.number_input(
-                "Max LLM Calls", value=st.session_state.max_llm_calls, min_value=1, key="_llm"
-            )
-            st.session_state.total_timeout = st.number_input(
-                "Timeout (s)", value=st.session_state.total_timeout, min_value=60, key="_to"
-            )
+        # else:
+        #     # Custom mode — show all controls
+        #     st.session_state.num_inventors = st.slider(
+        #         "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
+        #     )
+        #     st.session_state.max_revisions = st.slider(
+        #         "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
+        #     )
+        #     st.session_state.cross_pollinate = st.toggle(
+        #         "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
+        #     )
+        #     st.session_state.max_llm_calls = st.number_input(
+        #         "Max LLM Calls", value=st.session_state.max_llm_calls, min_value=1, key="_llm"
+        #     )
+        #     st.session_state.total_timeout = st.number_input(
+        #         "Timeout (s)", value=st.session_state.total_timeout, min_value=60, key="_to"
+        #     )
 
 
 # ============================================================================
@@ -900,6 +1103,8 @@ if _thread_state.get("done") and not st.session_state.run_active:
         st.session_state.current_response = _thread_state["response"]
         for f in st.session_state.uploaded_files:
             f["status"] = "processed"
+    if _thread_state.get("budget_stop"):
+        st.session_state.run_budget_stop = _thread_state["budget_stop"]
     if _thread_state.get("error"):
         st.session_state.run_error = _thread_state["error"]
     _thread_state["done"] = False
@@ -937,6 +1142,7 @@ elif not st.session_state.current_response:
             st.session_state.current_response = None
             st.session_state.run_error = None
             st.session_state.run_warning = None
+            st.session_state.run_budget_stop = None
             st.session_state["_final_logs"] = []
 
             settings = {
@@ -958,6 +1164,8 @@ elif not st.session_state.current_response:
 
 
 # -- Error / Warning Display --
+if st.session_state.run_budget_stop:
+    st.info(f"Run stopped due to budget limit: {st.session_state.run_budget_stop}")
 if st.session_state.run_error:
     st.error(f"Run failed: {st.session_state.run_error}")
 if st.session_state.run_warning:
@@ -967,8 +1175,7 @@ if st.session_state.run_warning:
 final_logs = st.session_state.get("_final_logs", [])
 if final_logs and not st.session_state.run_active:
     with st.expander("Run Log", expanded=True):
-        log_text = "\n".join(f"[{ts}] {lvl:5s}  {m}" for ts, lvl, m in final_logs)
-        st.code(log_text, language="log", wrap_lines=True)
+        _render_scrollable_logs(final_logs)
 
 
 # -- Outputs Section --
@@ -1008,16 +1215,7 @@ if response:
         st.button("Take to Kronos", disabled=True, key="btn_kronos", use_container_width=True)
     with ac2:
         if st.button("Clear and Restart", key="btn_clear", use_container_width=True):
-            st.session_state.current_response = None
-            st.session_state.uploaded_files = []
-            st.session_state.prompt_text = ""
-            st.session_state.constraints_text = ""
-            st.session_state.objectives_text = ""
-            st.session_state["_constraints"] = ""
-            st.session_state["_objectives"] = ""
-            st.session_state.run_error = None
-            st.session_state.run_warning = None
-            st.session_state["_final_logs"] = []
+            st.session_state["_reset_requested"] = True
             st.rerun()
     with ac3:
         if st.button("\u270f Add Note", key="btn_note", use_container_width=True):
@@ -1085,7 +1283,12 @@ try:
             # Status
             with r[3]:
                 status = run.get("status", "Unknown")
-                cls = "badge-completed" if status == "Completed" else "badge-failed"
+                if status == "Completed":
+                    cls = "badge-completed"
+                elif status in ("Completed (with issues)", "Stopped (Budget limit)"):
+                    cls = "badge-running"
+                else:
+                    cls = "badge-failed"
                 st.markdown(f'<span class="{cls}">{status}</span>', unsafe_allow_html=True)
 
             # Run time

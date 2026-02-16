@@ -126,7 +126,18 @@ class Persistence:
                     # Determine status
                     has_response = data.get("final_response") is not None
                     errors = data.get("errors", [])
-                    status = "Completed" if has_response and not errors else "Failed"
+                    budget_stopped = any(
+                        isinstance(err, str) and err.startswith("Budget exceeded:")
+                        for err in errors
+                    )
+                    if budget_stopped:
+                        status = "Stopped (Budget limit)"
+                    elif has_response and not errors:
+                        status = "Completed"
+                    elif has_response and errors:
+                        status = "Completed (with issues)"
+                    else:
+                        status = "Failed"
 
                     runs.append({
                         "run_id": data.get("run_id", "unknown"),
