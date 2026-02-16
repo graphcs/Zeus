@@ -292,7 +292,7 @@ _defaults = {
     "cross_pollinate": False,
     "max_llm_calls": 30,
     "max_revisions": 3,
-    "total_timeout": 900,
+    "total_timeout": 2000,
     "preset": "Normal",
     "prompt_text": "",
     "constraints_text": "",
