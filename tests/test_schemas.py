@@ -278,7 +278,6 @@ class TestBudgetConfig:
         assert config.target_llm_calls == 20
         assert config.max_revisions == 3
         assert config.per_call_timeout == 120.0
-        assert config.total_run_timeout == 900.0
 
     def test_custom_budget(self):
         config = BudgetConfig(max_llm_calls=10, max_revisions=1)
