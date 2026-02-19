@@ -1,7 +1,6 @@
 """CLI interface for Zeus."""
 
 import asyncio
-import sys
 from pathlib import Path
 from typing import Optional
 import typer
@@ -15,145 +14,101 @@ from src.models.schemas import UsageStats
 from src.utils.read_file import read_file_content as read_file_utils
 from dotenv import load_dotenv
 
-# Load environment variables from .env file if present
 load_dotenv()
 
 app = typer.Typer(
     name="zeus",
-    help="Zeus - Design Team Agent for multi-agent systems",
+    help="Zeus - Multi-Inventor Design System",
     add_completion=False,
 )
 console = Console()
 
 
-def print_response(
-    output: str,
-    assumptions: list[str],
-    known_issues: list[str],
-    run_id: str,
-    usage: UsageStats | None = None,
-    confidence: str | None = None,
-    coverage_score: float | None = None,
-    tradeoffs: list[str] | None = None,
-    evaluation_summary: dict | None = None,
-) -> None:
-    """Print the Zeus response in a formatted way with V1 evaluation signals.
-    
-    Args:
-        output: Main output content
-        assumptions: List of assumptions
-        known_issues: List of known issues
-        run_id: Run identifier
-        usage: Optional usage statistics
-        confidence: V1 confidence level (low/medium/high)
-        coverage_score: V1 coverage score (0.0-1.0)
-        tradeoffs: V1 design tradeoffs
-        evaluation_summary: V1 complete evaluation summary
-    """
+def print_response(response) -> None:
+    """Print the Zeus response with evaluation scorecard."""
     # Main output
-    console.print(Markdown(output))
+    console.print(Markdown(response.output))
 
-    # V1: Evaluation Summary Panel
-    if confidence or coverage_score is not None or evaluation_summary:
-        console.print()
-        
-        # Build evaluation summary
-        eval_lines = []
-        
-        if confidence:
-            # Color-code confidence
-            conf_colors = {"low": "red", "medium": "yellow", "high": "green"}
-            conf_color = conf_colors.get(confidence, "white")
-            conf_emoji = {"low": "🔴", "medium": "🟡", "high": "🟢"}
-            emoji = conf_emoji.get(confidence, "⚪")
-            eval_lines.append(f"{emoji} Confidence: [{conf_color}]{confidence.upper()}[/{conf_color}]")
-        
-        if coverage_score is not None:
-            # Format coverage as percentage with color
-            coverage_pct = int(coverage_score * 100)
-            if coverage_pct >= 83:  # 5/6 or 6/6
-                cov_color = "green"
-            elif coverage_pct >= 50:  # 3/6 or 4/6
-                cov_color = "yellow"
-            else:
-                cov_color = "red"
-            eval_lines.append(f"📊 Coverage: [{cov_color}]{coverage_pct}%[/{cov_color}] ({int(coverage_score * 6)}/6 perspectives)")
-        
-        # Add detailed metrics if available
-        if evaluation_summary:
+    # Evaluation Scorecard
+    console.print()
+    score_pct = response.score_percentage
+    if score_pct >= 85:
+        score_color = "green"
+    elif score_pct >= 70:
+        score_color = "cyan"
+    elif score_pct >= 55:
+        score_color = "yellow"
+    else:
+        score_color = "red"
+
+    dq_status = "[red]DISQUALIFIED[/red]" if response.disqualified else "[green]QUALIFIED[/green]"
+
+    eval_lines = [
+        f"Score: [{score_color}]{response.total_score:.1f} / {response.max_score:.0f} ({score_pct:.1f}%)[/{score_color}]",
+        f"Status: {dq_status}",
+    ]
+
+    if response.scorecard:
+        # Show per-criterion scores
+        eval_lines.append("")
+        eval_lines.append("[bold]Criteria Scores:[/bold]")
+        for cs in response.scorecard.criteria_scores:
+            eval_lines.append(f"  {cs.section} {cs.name}: {cs.raw_score}/5 (x{cs.weight} = {cs.weighted_score:.1f})")
+
+        if response.scorecard.hard_constraints:
             eval_lines.append("")
-            eval_lines.append("[bold]Issue Breakdown:[/bold]")
-            blockers = evaluation_summary.get('blockers', 0)
-            majors = evaluation_summary.get('majors', 0)
-            minors = evaluation_summary.get('minors', 0)
-            total = evaluation_summary.get('total_issues', 0)
-            
-            if blockers > 0:
-                eval_lines.append(f"  🚫 Blockers: [red]{blockers}[/red]")
-            if majors > 0:
-                eval_lines.append(f"  ⚠️  Majors: [yellow]{majors}[/yellow]")
-            if minors > 0:
-                eval_lines.append(f"  ℹ️  Minors: [blue]{minors}[/blue]")
-            
-            if total == 0:
-                eval_lines.append("  ✨ No issues found")
-            
-            # Show missing perspectives
-            missing = evaluation_summary.get('missing_perspectives', [])
-            if missing:
-                eval_lines.append("")
-                eval_lines.append(f"[yellow]Missing Perspectives:[/yellow] {', '.join(missing)}")
-        
-        if eval_lines:
-            console.print(Panel(
-                "\n".join(eval_lines),
-                title="🎯 V1 Evaluation",
-                border_style="cyan",
-            ))
+            eval_lines.append("[bold]HARD Constraints:[/bold]")
+            for hc in response.scorecard.hard_constraints:
+                status = "[green]PASS[/green]" if hc.passed else "[red]FAIL[/red]"
+                eval_lines.append(f"  {hc.constraint_id} {hc.name}: {status}")
 
-    # Tradeoffs (V1)
-    if tradeoffs:
-        console.print()
-        console.print(Panel(
-            "\n".join(f"• {t}" for t in tradeoffs),
-            title="⚖️ Design Tradeoffs",
-            border_style="magenta",
-        ))
+        if response.scorecard.disqualification_reasons:
+            eval_lines.append("")
+            eval_lines.append("[red][bold]Disqualification Reasons:[/bold][/red]")
+            for reason in response.scorecard.disqualification_reasons:
+                eval_lines.append(f"  - {reason}")
+
+        if response.scorecard.identified_weaknesses:
+            eval_lines.append("")
+            eval_lines.append("[bold]Identified Weaknesses:[/bold]")
+            for w in response.scorecard.identified_weaknesses:
+                eval_lines.append(f"  - {w}")
+
+    console.print(Panel(
+        "\n".join(eval_lines),
+        title="Evaluation Scorecard",
+        border_style="cyan",
+    ))
 
     # Assumptions
     console.print()
     console.print(Panel(
-        "\n".join(f"• {a}" for a in assumptions),
-        title="📋 Assumptions",
+        "\n".join(f"- {a}" for a in response.assumptions),
+        title="Assumptions",
         border_style="blue",
     ))
 
     # Known Issues
     console.print()
     console.print(Panel(
-        "\n".join(f"• {i}" for i in known_issues),
-        title="⚠️ Known Issues",
+        "\n".join(f"- {i}" for i in response.known_issues),
+        title="Known Issues",
         border_style="yellow",
     ))
 
     # Usage stats
-    if usage:
+    if response.usage:
         console.print()
+        u = response.usage
         usage_text = (
-            f"LLM Calls: {usage.llm_calls} | "
-            f"Tokens: {usage.tokens_in:,} in / {usage.tokens_out:,} out ({usage.total_tokens:,} total) | "
-            f"Cost: ${usage.cost_usd:.4f}"
+            f"LLM Calls: {u.llm_calls} | "
+            f"Tokens: {u.tokens_in:,} in / {u.tokens_out:,} out ({u.total_tokens:,} total) | "
+            f"Cost: ${u.cost_usd:.4f}"
         )
-        console.print(Panel(
-            usage_text,
-            title="📊 Usage",
-            border_style="green",
-        ))
+        console.print(Panel(usage_text, title="Usage", border_style="green"))
 
-    # Run ID
     console.print()
-    console.print(f"[dim]Run ID: {run_id}[/dim]")
-
+    console.print(f"[dim]Run ID: {response.run_id}[/dim]")
 
 
 def read_file_content(file_path: Path) -> str:
@@ -169,53 +124,68 @@ def read_file_content(file_path: Path) -> str:
 
 
 @app.command()
-def brief(
-    prompt: str = typer.Argument(..., help="The idea or problem to create a design brief for"),
+def solve(
+    prompt: str = typer.Argument(..., help="Problem statement or idea to solve"),
     constraint: Optional[list[str]] = typer.Option(
-        None,
-        "--constraint", "-c",
+        None, "--constraint", "-c",
         help="Add a constraint (can be used multiple times)",
     ),
-    context: Optional[str] = typer.Option(
-        None,
-        "--context",
-        help="Additional context as a string",
+    objective: Optional[list[str]] = typer.Option(
+        None, "--objective", "-o",
+        help="Add an objective (can be used multiple times)",
     ),
     file: Optional[list[Path]] = typer.Option(
-        None,
-        "--file", "-f",
+        None, "--file", "-f",
         help="Additional context file (e.g. .md, .pdf, .docx, .txt)",
     ),
+    library: Optional[list[Path]] = typer.Option(
+        None, "--library", "-l",
+        help="Path to a library file (can be used multiple times)",
+    ),
+    output_spec: Optional[Path] = typer.Option(
+        None, "--output-spec",
+        help="Path to output specification file",
+    ),
+    eval_criteria: Optional[Path] = typer.Option(
+        None, "--eval-criteria",
+        help="Path to evaluation criteria file",
+    ),
+    cross_pollinate: bool = typer.Option(
+        False, "--cross-pollinate",
+        help="Enable Phase 2 cross-pollination between inventors",
+    ),
+    inventors: int = typer.Option(
+        4, "--inventors", "-n",
+        help="Number of parallel inventors (1-10)",
+        min=1, max=10,
+    ),
     model: Optional[str] = typer.Option(
-        None,
-        "--model", "-m",
+        None, "--model", "-m",
         help="Override the default model",
     ),
     output_file: Optional[Path] = typer.Option(
-        None,
-        "--output", "-o",
+        None, "--output",
         help="Save output to file",
     ),
 ) -> None:
-    """Generate a Design Brief from an idea or problem statement.
+    """Generate a solution using Zeus's multi-inventor pipeline.
 
     Example:
-        zeus brief "Build a system that automatically reviews code changes"
-        zeus brief "Build a code review system" -c "Must be async" -c "No external deps"
+        zeus solve "Design a scalable e-commerce platform"
+        zeus solve "Build a trading system" -c "Must be async" -o "High availability"
+        zeus solve "Design an API" -l library1.md -l library2.md --cross-pollinate
     """
     constraints = list(constraint) if constraint else []
+    objectives = list(objective) if objective else []
+    library_paths = [str(p) for p in library] if library else []
 
-    # Process context from string and files
+    # Process context from files
     context_parts = []
-    if context:
-        context_parts.append(context)
-    
     if file:
         for f in file:
             content = read_file_content(f)
             if content:
                 context_parts.append(content)
-    
     combined_context = "\n\n".join(context_parts) if context_parts else None
 
     with Progress(
@@ -232,9 +202,14 @@ def brief(
         try:
             response = asyncio.run(run_zeus(
                 prompt=prompt,
-                mode="brief",
                 constraints=constraints,
+                objectives=objectives,
                 context=combined_context,
+                library_paths=library_paths,
+                output_spec_path=str(output_spec) if output_spec else None,
+                eval_criteria_path=str(eval_criteria) if eval_criteria else None,
+                enable_cross_pollination=cross_pollinate,
+                num_inventors=inventors,
                 model=model,
                 on_progress=on_progress,
             ))
@@ -242,113 +217,7 @@ def brief(
             console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
 
-    print_response(
-        response.output,
-        response.assumptions,
-        response.known_issues,
-        response.run_id,
-        response.usage,
-        response.confidence,
-        response.coverage_score,
-        response.tradeoffs,
-    )
-
-    if output_file:
-        output_file.write_text(response.output)
-        console.print(f"\n[green]Output saved to {output_file}[/green]")
-
-
-@app.command()
-def solution(
-    prompt: Optional[str] = typer.Argument(
-        None,
-        help="The design brief text (alternative to --file)",
-    ),
-    file: Optional[Path] = typer.Option(
-        None,
-        "--file", "-f",
-        help="Path to design brief file",
-        exists=True,
-        readable=True,
-    ),
-    constraint: Optional[list[str]] = typer.Option(
-        None,
-        "--constraint", "-c",
-        help="Add a constraint (can be used multiple times)",
-    ),
-    context: Optional[str] = typer.Option(
-        None,
-        "--context",
-        help="Additional context as a string",
-    ),
-    model: Optional[str] = typer.Option(
-        None,
-        "--model", "-m",
-        help="Override the default model",
-    ),
-    output_file: Optional[Path] = typer.Option(
-        None,
-        "--output", "-o",
-        help="Save output to file",
-    ),
-) -> None:
-    """Generate a Target Solution from a Design Brief.
-
-    Example:
-        zeus solution --file design_brief.md
-        zeus solution "$(cat design_brief.md)"
-    """
-    # Get input from file or argument
-    if file:
-        input_text = file.read_text()
-    elif prompt:
-        input_text = prompt
-    else:
-        console.print("[red]Error:[/red] Provide either a prompt argument or --file option")
-        raise typer.Exit(1)
-
-    constraints = list(constraint) if constraint else []
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Starting Zeus...", total=None)
-
-        def on_progress(msg: str) -> None:
-            progress.update(task, description=msg)
-
-        try:
-            response = asyncio.run(run_zeus(
-                prompt=input_text,
-                mode="solution",
-                constraints=constraints,
-                context=context,
-                model=model,
-                on_progress=on_progress,
-            ))
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            raise typer.Exit(1)
-
-    # Get evaluation summary if available
-    eval_summary = None
-    if hasattr(response, 'evaluation_summary'):
-        eval_summary = response.evaluation_summary
-    
-    print_response(
-        response.output,
-        response.assumptions,
-        response.known_issues,
-        response.run_id,
-        response.usage,
-        response.confidence,
-        response.coverage_score,
-        response.tradeoffs,
-        eval_summary,
-    )
+    print_response(response)
 
     if output_file:
         output_file.write_text(response.output)
@@ -367,14 +236,17 @@ def history(
         console.print("[dim]No runs found[/dim]")
         return
 
-    console.print(f"\n[bold]Recent Zeus Runs[/bold] (showing {len(runs)} of {limit} max)\n")
+    console.print(f"\n[bold]Recent Zeus Runs[/bold] (showing {len(runs)})\n")
 
     for run in runs:
-        status = "✅" if run["has_response"] else "❌"
+        status = "ok" if run["has_response"] else "failed"
         errors = f" ({run['errors']} errors)" if run["errors"] > 0 else ""
+        score_str = ""
+        if run.get("score") is not None:
+            score_str = f" [{run['score']:.0f}/220]"
         console.print(
-            f"  {status} [{run['mode']}] {run['run_id'][:8]}... "
-            f"[dim]{run['timestamp']}[/dim]{errors}"
+            f"  {status} {run['run_id'][:8]}... "
+            f"[dim]{run['timestamp']}[/dim]{score_str}{errors}"
         )
 
 
@@ -391,7 +263,6 @@ def show(
         raise typer.Exit(1)
 
     console.print(f"\n[bold]Run details: {record.run_id}[/bold]\n")
-    console.print(f"Mode: {record.mode}")
     console.print(f"Timestamp: {record.timestamp}")
     console.print(f"Model: {record.model_version}")
 
@@ -400,7 +271,11 @@ def show(
         console.print(f"\nBudget Used:")
         console.print(f"  LLM Calls: {record.budget_used.llm_calls}")
         console.print(f"  Tokens: {record.budget_used.tokens_in:,} in / {record.budget_used.tokens_out:,} out ({total_tokens:,} total)")
-        console.print(f"  Revisions: {record.budget_used.revisions}")
+
+    if record.inventor_solutions:
+        console.print(f"\nInventors: {len(record.inventor_solutions)}")
+        for sol in record.inventor_solutions:
+            console.print(f"  - {sol.inventor_id} ({sol.inventor_type}): {len(sol.content)} chars")
 
     if record.errors:
         console.print(f"\n[red]Errors:[/red]")
@@ -409,24 +284,7 @@ def show(
 
     if record.final_response:
         console.print("\n[bold]Final Response:[/bold]")
-        # Get fields from final_response, with fallbacks for V1 fields
-        usage = getattr(record.final_response, 'usage', None)
-        confidence = getattr(record.final_response, 'confidence', None)
-        coverage_score = getattr(record.final_response, 'coverage_score', None)
-        tradeoffs = getattr(record.final_response, 'tradeoffs', None)
-        eval_summary = getattr(record.final_response, 'evaluation_summary', None)
-        
-        print_response(
-            record.final_response.output,
-            record.final_response.assumptions,
-            record.final_response.known_issues,
-            record.final_response.run_id,
-            usage,
-            confidence,
-            coverage_score,
-            tradeoffs,
-            eval_summary,
-        )
+        print_response(record.final_response)
 
 
 @app.command()
@@ -434,14 +292,14 @@ def ui() -> None:
     """Launch the Zeus Web UI."""
     import subprocess
     import sys
-    
+
     package_dir = Path(__file__).parent
     ui_path = package_dir / "ui.py"
-    
+
     if not ui_path.exists():
         console.print(f"[red]Error: UI file not found at {ui_path}[/red]")
         raise typer.Exit(1)
-        
+
     console.print(f"Starting Zeus UI from {ui_path}...")
     console.print("Press Ctrl+C to stop.")
     try:
@@ -452,9 +310,10 @@ def ui() -> None:
 
 @app.callback()
 def main() -> None:
-    """Zeus - Design Team Agent.
+    """Zeus - Multi-Inventor Design System.
 
-    Generate Design Briefs from ideas, or Target Solutions from Design Briefs.
+    Generate solutions using parallel inventors, convergent synthesis,
+    library-informed critique, and iterative refinement.
     """
     pass
 

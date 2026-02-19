@@ -98,7 +98,7 @@ class Persistence:
             limit: Maximum number of runs to return.
 
         Returns:
-            List of run summaries (id, timestamp, mode, status).
+            List of run summaries with fields for history table display.
         """
         runs = []
         filepaths = sorted(self.base_dir.glob("*.json"), reverse=True)
@@ -107,12 +107,48 @@ class Persistence:
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    # Extract score from self_evaluation if present
+                    score = None
+                    self_eval = data.get("self_evaluation")
+                    if self_eval and isinstance(self_eval, dict):
+                        score = self_eval.get("total_score")
+
+                    # Extract request info for history table
+                    request = data.get("request", {})
+                    input_count = (
+                        len(request.get("constraints", []))
+                        + len(request.get("objectives", []))
+                    )
+                    has_context = request.get("context") is not None
+                    if has_context:
+                        input_count += 1
+
+                    # Determine status
+                    has_response = data.get("final_response") is not None
+                    errors = data.get("errors", [])
+                    budget_stopped = any(
+                        isinstance(err, str) and err.startswith("Budget exceeded:")
+                        for err in errors
+                    )
+                    if budget_stopped:
+                        status = "Stopped (Budget limit)"
+                    elif has_response and not errors:
+                        status = "Completed"
+                    elif has_response and errors:
+                        status = "Completed (with issues)"
+                    else:
+                        status = "Failed"
+
                     runs.append({
                         "run_id": data.get("run_id", "unknown"),
                         "timestamp": data.get("timestamp", "unknown"),
-                        "mode": data.get("mode", "unknown"),
-                        "has_response": data.get("final_response") is not None,
-                        "errors": len(data.get("errors", [])),
+                        "has_response": has_response,
+                        "errors": len(errors),
+                        "score": score,
+                        "status": status,
+                        "input_count": input_count,
+                        "prompt": request.get("prompt", "")[:100],
+                        "budget_used": data.get("budget_used", {}),
                     })
             except (json.JSONDecodeError, KeyError):
                 continue
