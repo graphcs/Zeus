@@ -292,7 +292,6 @@ _defaults = {
     "cross_pollinate": False,
     "max_llm_calls": 30,
     "max_revisions": 3,
-    "total_timeout": 2000,
     "preset": "Normal",
     "prompt_text": "",
     "constraints_text": "",
@@ -506,8 +505,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
 
         _log(f"Pipeline starting — {settings['num_inventors']} inventors, "
              f"budget {settings['max_llm_calls']} calls, "
-             f"max {settings['max_revisions']} revisions, "
-             f"timeout {settings['total_timeout']}s")
+               f"max {settings['max_revisions']} revisions")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -523,7 +521,6 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
             on_progress=on_progress,
             max_llm_calls=settings["max_llm_calls"],
             max_revisions=settings["max_revisions"],
-            total_run_timeout=settings["total_timeout"],
         ))
         loop.close()
         _thread_state["response"] = response
@@ -536,7 +533,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
         # [OPEN] prefixed) AND real pipeline errors (timeout, LLM errors, etc).
         # Only surface real pipeline errors — critique findings are expected output.
         _error_prefixes = (
-            "Run timeout:", "LLM error:", "Budget exceeded:",
+            "LLM error:", "Budget exceeded:",
             "Assembly failed:", "Unexpected error:", "All inventors failed",
             "Synthesis produced empty", "Generation failed",
         )
@@ -865,7 +862,6 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 5,
             "max_revisions": 0,
-            "total_timeout": 600,
             "desc": "~3-5 min — 1 inventor, no refinement, skip critique",
         },
         "Fast": {
@@ -873,7 +869,6 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 12,
             "max_revisions": 1,
-            "total_timeout": 1100,
             "desc": "~5-10 min — 2 inventors, 1 refinement pass",
         },
         "Normal": {
@@ -881,7 +876,6 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 30,
             "max_revisions": 3,
-            "total_timeout": 2000,
             "desc": "~10-20 min — 4 inventors, up to 3 refinements",
         },
         "Thorough": {
@@ -889,7 +883,6 @@ with st.sidebar:
             "cross_pollinate": True,
             "max_llm_calls": 50,
             "max_revisions": 3,
-            "total_timeout": 3600,
             "desc": "~15-25 min — 5 inventors, cross-pollination, full critique",
         },
     }
@@ -908,7 +901,6 @@ with st.sidebar:
                 st.session_state.cross_pollinate = p["cross_pollinate"]
                 st.session_state.max_llm_calls = p["max_llm_calls"]
                 st.session_state.max_revisions = p["max_revisions"]
-                st.session_state.total_timeout = p["total_timeout"]
 
         chosen = st.radio(
             "Run Mode",
@@ -934,9 +926,6 @@ with st.sidebar:
         #     )
         #     st.session_state.max_llm_calls = st.number_input(
         #         "Max LLM Calls", value=st.session_state.max_llm_calls, min_value=1, key="_llm"
-        #     )
-        #     st.session_state.total_timeout = st.number_input(
-        #         "Timeout (s)", value=st.session_state.total_timeout, min_value=60, key="_to"
         #     )
 
 
@@ -1150,7 +1139,6 @@ elif not st.session_state.current_response:
                 "num_inventors": st.session_state.num_inventors,
                 "max_llm_calls": st.session_state.max_llm_calls,
                 "max_revisions": st.session_state.max_revisions,
-                "total_timeout": st.session_state.total_timeout,
                 "output_spec_path": OUTPUT_SPEC_PATH,
                 "eval_criteria_path": EVAL_CRITERIA_PATH,
             }

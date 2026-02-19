@@ -38,11 +38,6 @@ class BudgetExceededError(Exception):
     pass
 
 
-class RunTimeoutError(Exception):
-    """Raised when total run timeout is exceeded."""
-    pass
-
-
 class RunController:
     """Orchestrates the 7-phase Zeus pipeline.
 
@@ -119,17 +114,7 @@ class RunController:
         start_time = time.monotonic()
 
         try:
-            async with asyncio.timeout(self.budget_config.total_run_timeout):
-                await self._execute_pipeline(request, record)
-
-        except TimeoutError:
-            elapsed = time.monotonic() - start_time
-            msg = (
-                f"Run timeout: exceeded {self.budget_config.total_run_timeout}s limit "
-                f"(elapsed: {elapsed:.1f}s)"
-            )
-            logger.error(msg)
-            record.errors.append(msg)
+            await self._execute_pipeline(request, record)
 
         except BudgetExceededError as e:
             logger.error(f"Budget exceeded: {e}")
@@ -466,7 +451,6 @@ async def run_zeus(
     max_llm_calls: int | None = None,
     max_revisions: int | None = None,
     per_call_timeout: float | None = None,
-    total_run_timeout: float | None = None,
 ) -> ZeusResponse:
     """Convenience function to run Zeus.
 
@@ -486,7 +470,6 @@ async def run_zeus(
         max_llm_calls: Optional hard cap on LLM calls.
         max_revisions: Optional max refinement iterations.
         per_call_timeout: Optional timeout per LLM call in seconds.
-        total_run_timeout: Optional total run timeout in seconds.
 
     Returns:
         The ZeusResponse with 5 deliverables and evaluation scorecard.
@@ -510,8 +493,6 @@ async def run_zeus(
         budget_kwargs["max_revisions"] = max_revisions
     if per_call_timeout is not None:
         budget_kwargs["per_call_timeout"] = per_call_timeout
-    if total_run_timeout is not None:
-        budget_kwargs["total_run_timeout"] = total_run_timeout
 
     budget_config = BudgetConfig(**budget_kwargs) if budget_kwargs else BudgetConfig()
 
