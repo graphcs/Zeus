@@ -16,7 +16,13 @@ from src.models.schemas import (
     CrossCritique,
     SelfEvaluationScorecard,
 )
-from src.llm.openrouter import OpenRouterClient, OpenRouterError, OpenRouterTimeoutError
+from src.llm.openrouter import (
+    OpenRouterClient,
+    OpenRouterError,
+    OpenRouterTimeoutError,
+    OpenRouterRateLimitError,
+    OpenRouterTransientError,
+)
 from src.core.normalizer import Normalizer
 from src.core.inventor import Inventor
 from src.core.synthesizer import Synthesizer
@@ -120,6 +126,15 @@ class RunController:
             logger.error(f"Budget exceeded: {e}")
             record.errors.append(f"Budget exceeded: {str(e)}")
 
+        except OpenRouterRateLimitError as e:
+            elapsed = time.monotonic() - start_time
+            msg = (
+                f"LLM rate limit hit: {str(e)} (run elapsed: {elapsed:.1f}s). "
+                "The pipeline stopped due to too many requests. Try again in a moment."
+            )
+            logger.error(msg)
+            record.errors.append(msg)
+
         except OpenRouterTimeoutError as e:
             elapsed = time.monotonic() - start_time
             msg = f"LLM call timeout: {str(e)} (run elapsed: {elapsed:.1f}s)"
@@ -154,15 +169,122 @@ class RunController:
                 for err in record.errors:
                     logger.error(f"  • {err}")
             self.on_progress("Saving run record...")
-            self.persistence.save(record)
-            logger.info(f"Run record saved: {record.run_id}")
+            try:
+                self.persistence.save(record)
+                logger.info(f"Run record saved: {record.run_id}")
+            except Exception as e:
+                logger.error(f"Failed to persist run record: {e}")
 
         return record.final_response
 
     async def _execute_pipeline(self, request: ZeusRequest, record: RunRecord) -> None:
-        """Execute all 7 phases of the pipeline."""
+        """Execute all 7 phases of the pipeline with per-phase error isolation."""
 
         # ── Phase 0: Intake ────────────────────────────────────
+        await self._safe_phase("Phase 0", record, self._phase_0, request, record)
+
+        # Abort only if we have no problem brief at all
+        if record.problem_brief is None:
+            logger.error("Phase 0 produced no ProblemBrief — cannot continue pipeline")
+            record.errors.append("Generation failed: Phase 0 intake produced no output")
+            return
+
+        # ── Phase 1: Divergent Generation ─────────────────────
+        await self._safe_phase("Phase 1", record, self._phase_1, request, record)
+
+        valid_solutions = [
+            s for s in (record.inventor_solutions or [])
+            if not s.content.startswith("[Inventor")
+        ]
+        if not valid_solutions:
+            logger.error("All inventors failed — no valid solutions produced")
+            record.errors.append("All inventors failed — no valid solutions produced")
+            return
+
+        # ── Phase 2: Cross-Pollination (optional) ─────────────
+        if request.enable_cross_pollination and len(valid_solutions) >= 2:
+            remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+            cross_poll_budget = min(remaining // 2, len(valid_solutions) * 2)
+            if cross_poll_budget >= 2:
+                await self._safe_phase("Phase 2", record, self._phase_2, valid_solutions, record)
+            else:
+                logger.info("Phase 2: Skipped — insufficient budget for cross-pollination")
+        else:
+            logger.info("Phase 2: Skipped (cross-pollination disabled or <2 solutions)")
+
+        # ── Phase 3: Convergent Synthesis ──────────────────────
+        await self._safe_phase("Phase 3", record, self._phase_3, record)
+
+        if not record.synthesis_result or not record.synthesis_result.unified_draft:
+            logger.error("Phase 3 produced empty synthesis draft")
+            record.errors.append("Synthesis produced empty draft")
+            return
+
+        # ── Phase 4: Library-Informed Critique ─────────────────
+        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+        if remaining >= 1:
+            await self._safe_phase("Phase 4", record, self._phase_4, record)
+        else:
+            logger.info("Phase 4: Skipped — budget exhausted")
+
+        # ── Phase 5: Iterative Refinement ──────────────────────
+        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
+        if record.library_critique and remaining >= 2:
+            blockers = record.library_critique.blocker_count
+            majors = record.library_critique.major_count
+            if blockers > 0 or majors > 0:
+                await self._safe_phase("Phase 5", record, self._phase_5, record, remaining)
+            else:
+                logger.info("Phase 5: Skipped — no blocker/major issues found")
+                record.final_draft = record.synthesis_result.unified_draft
+        else:
+            logger.info("Phase 5: Skipped — no critique or budget exhausted")
+            if record.synthesis_result:
+                record.final_draft = record.synthesis_result.unified_draft
+
+        # ── Phase 6: Output Assembly ───────────────────────────
+        await self._safe_phase("Phase 6", record, self._phase_6, record)
+
+    # ------------------------------------------------------------------
+    # Per-phase helpers
+    # ------------------------------------------------------------------
+
+    async def _safe_phase(
+        self,
+        phase_name: str,
+        record: RunRecord,
+        phase_fn: Callable,
+        *args,
+    ) -> None:
+        """Run a single pipeline phase with structured error catching.
+
+        Exceptions are caught, logged, and appended to record.errors so
+        subsequent phases can still attempt a best-effort result.
+        """
+        try:
+            await phase_fn(*args)
+        except BudgetExceededError:
+            raise  # Budget errors propagate up to abort the pipeline
+        except OpenRouterRateLimitError as e:
+            msg = f"{phase_name} rate-limited: {e}"
+            logger.error(msg)
+            record.errors.append(f"LLM error: {msg}")
+            raise  # Rate limits propagate so the top-level handler can surface them
+        except (OpenRouterTimeoutError, OpenRouterTransientError) as e:
+            msg = f"{phase_name} LLM transient error: {e}"
+            logger.error(msg)
+            record.errors.append(msg)
+        except OpenRouterError as e:
+            msg = f"{phase_name} LLM error: {e}"
+            logger.error(msg)
+            record.errors.append(msg)
+        except Exception as e:
+            msg = f"{phase_name} unexpected error: {e}"
+            logger.error(msg, exc_info=True)
+            record.errors.append(msg)
+
+    async def _phase_0(self, request: ZeusRequest, record: RunRecord) -> None:
+        """Phase 0: Intake — normalize request into ProblemBrief."""
         self.on_progress("Phase 0: Normalizing input...")
         logger.info("Phase 0: Intake — normalizing request into ProblemBrief")
         self._check_budget(record, "intake")
@@ -175,7 +297,8 @@ class RunController:
             f"[budget: {record.budget_used.llm_calls} calls]"
         )
 
-        # ── Phase 1: Divergent Generation ─────────────────────
+    async def _phase_1(self, request: ZeusRequest, record: RunRecord) -> None:
+        """Phase 1: Divergent Generation — run parallel inventors."""
         self.on_progress("Phase 1: Running parallel inventors...")
         configs = self._build_inventor_configs(request, record)
         record.inventor_configs = configs
@@ -191,37 +314,26 @@ class RunController:
         record.inventor_solutions = solutions
         self._update_budget_aggregate(record, inv_usage)
 
-        # Need at least 1 valid solution to continue
         valid_solutions = [s for s in solutions if not s.content.startswith("[Inventor")]
         logger.info(
             f"Phase 1 complete — {len(valid_solutions)}/{len(solutions)} valid solutions  "
             f"[budget: {record.budget_used.llm_calls} calls]"
         )
-        if not valid_solutions:
-            logger.error("All inventors failed — no valid solutions produced")
-            record.errors.append("All inventors failed — no valid solutions produced")
-            return
 
-        # ── Phase 2: Cross-Pollination (optional) ─────────────
-        if request.enable_cross_pollination and len(valid_solutions) >= 2:
-            remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
-            cross_poll_budget = min(remaining // 2, len(valid_solutions) * 2)
-            if cross_poll_budget >= 2:
-                self.on_progress("Phase 2: Cross-pollination...")
-                logger.info(f"Phase 2: Cross-pollination with {len(valid_solutions)} solutions")
-                cross_critiques, cp_usage = await self._run_cross_pollination(
-                    valid_solutions, record
-                )
-                record.cross_critiques = cross_critiques
-                self._update_budget_aggregate(record, cp_usage)
-                logger.info(
-                    f"Phase 2 complete — {len(cross_critiques)} critiques  "
-                    f"[budget: {record.budget_used.llm_calls} calls]"
-                )
-        else:
-            logger.info("Phase 2: Skipped (cross-pollination disabled or <2 solutions)")
+    async def _phase_2(self, valid_solutions: list, record: RunRecord) -> None:
+        """Phase 2: Cross-Pollination (optional)."""
+        self.on_progress("Phase 2: Cross-pollination...")
+        logger.info(f"Phase 2: Cross-pollination with {len(valid_solutions)} solutions")
+        cross_critiques, cp_usage = await self._run_cross_pollination(valid_solutions, record)
+        record.cross_critiques = cross_critiques
+        self._update_budget_aggregate(record, cp_usage)
+        logger.info(
+            f"Phase 2 complete — {len(cross_critiques)} critiques  "
+            f"[budget: {record.budget_used.llm_calls} calls]"
+        )
 
-        # ── Phase 3: Convergent Synthesis ──────────────────────
+    async def _phase_3(self, record: RunRecord) -> None:
+        """Phase 3: Convergent Synthesis."""
         self.on_progress("Phase 3: Synthesizing solutions...")
         logger.info("Phase 3: Synthesizing inventor solutions into unified draft")
         self._check_budget(record, "synthesis")
@@ -233,66 +345,60 @@ class RunController:
         record.synthesis_result = synthesis_result
         self._update_budget(record, syn_usage)
 
-        if not synthesis_result.unified_draft:
-            logger.error("Synthesis produced empty draft")
-            record.errors.append("Synthesis produced empty draft")
-            return
+        if synthesis_result.unified_draft:
+            logger.info(
+                f"Phase 3 complete — draft length {len(synthesis_result.unified_draft)} chars, "
+                f"{len(synthesis_result.open_issues)} open issues  "
+                f"[budget: {record.budget_used.llm_calls} calls]"
+            )
+        else:
+            logger.warning("Phase 3 produced an empty unified draft")
+
+    async def _phase_4(self, record: RunRecord) -> None:
+        """Phase 4: Library-Informed Critique."""
+        self.on_progress("Phase 4: Running library critics...")
+        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
         logger.info(
-            f"Phase 3 complete — draft length {len(synthesis_result.unified_draft)} chars, "
-            f"{len(synthesis_result.open_issues)} open issues  "
+            f"Phase 4: Running parallel library critics (budget remaining: {remaining} calls)"
+        )
+        critique_result, crit_usage = await self.library_critic.critique(
+            record.synthesis_result.unified_draft,
+            record.problem_brief.eval_criteria,
+        )
+        record.library_critique = critique_result
+        self._update_budget_aggregate(record, crit_usage)
+        logger.info(
+            f"Phase 4 complete — {critique_result.blocker_count} blockers, "
+            f"{critique_result.major_count} major, {critique_result.minor_count} minor issues  "
             f"[budget: {record.budget_used.llm_calls} calls]"
         )
 
-        # ── Phase 4: Library-Informed Critique ─────────────────
-        self.on_progress("Phase 4: Running library critics...")
-        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
-        logger.info(f"Phase 4: Running 6 parallel library critics (budget remaining: {remaining} calls)")
-        if remaining >= 1:
-            critique_result, crit_usage = await self.library_critic.critique(
-                synthesis_result.unified_draft,
-                record.problem_brief.eval_criteria,
-            )
-            record.library_critique = critique_result
-            self._update_budget_aggregate(record, crit_usage)
-            logger.info(
-                f"Phase 4 complete — {critique_result.blocker_count} blockers, "
-                f"{critique_result.major_count} major, {critique_result.minor_count} minor issues  "
-                f"[budget: {record.budget_used.llm_calls} calls]"
-            )
+    async def _phase_5(self, record: RunRecord, remaining: int) -> None:
+        """Phase 5: Iterative Refinement."""
+        blockers = record.library_critique.blocker_count
+        majors = record.library_critique.major_count
+        self.on_progress("Phase 5: Refining draft...")
+        logger.info(
+            f"Phase 5: Refining draft — {blockers} blockers, {majors} major issues "
+            f"(max {self.budget_config.max_revisions} revisions, {remaining} calls left)"
+        )
+        final_draft, history, ref_usage = await self.refiner.refine(
+            record.synthesis_result.unified_draft,
+            record.library_critique,
+            record.problem_brief,
+            max_revisions=self.budget_config.max_revisions,
+            budget_remaining=remaining,
+        )
+        record.final_draft = final_draft
+        record.refinement_history = history
+        self._update_budget_aggregate(record, ref_usage)
+        logger.info(
+            f"Phase 5 complete — {len(history)} revision(s)  "
+            f"[budget: {record.budget_used.llm_calls} calls]"
+        )
 
-        # ── Phase 5: Iterative Refinement ──────────────────────
-        remaining = self.budget_config.max_llm_calls - record.budget_used.llm_calls
-        if record.library_critique and remaining >= 2:
-            blockers = record.library_critique.blocker_count
-            majors = record.library_critique.major_count
-            if blockers > 0 or majors > 0:
-                self.on_progress("Phase 5: Refining draft...")
-                logger.info(
-                    f"Phase 5: Refining draft — {blockers} blockers, {majors} major issues "
-                    f"(max {self.budget_config.max_revisions} revisions, {remaining} calls left)"
-                )
-                final_draft, history, ref_usage = await self.refiner.refine(
-                    synthesis_result.unified_draft,
-                    record.library_critique,
-                    record.problem_brief,
-                    max_revisions=self.budget_config.max_revisions,
-                    budget_remaining=remaining,
-                )
-                record.final_draft = final_draft
-                record.refinement_history = history
-                self._update_budget_aggregate(record, ref_usage)
-                logger.info(
-                    f"Phase 5 complete — {len(history)} revision(s)  "
-                    f"[budget: {record.budget_used.llm_calls} calls]"
-                )
-            else:
-                logger.info("Phase 5: Skipped — no blocker/major issues found")
-                record.final_draft = synthesis_result.unified_draft
-        else:
-            logger.info("Phase 5: Skipped — no critique or budget exhausted")
-            record.final_draft = synthesis_result.unified_draft
-
-        # ── Phase 6: Output Assembly ───────────────────────────
+    async def _phase_6(self, record: RunRecord) -> None:
+        """Phase 6: Output Assembly."""
         self.on_progress("Phase 6: Assembling deliverables...")
         logger.info("Phase 6: Assembling 5 deliverables + evaluation scorecard")
         response, asm_usage = await self.assembler.assemble(record)
@@ -305,6 +411,10 @@ class RunController:
             f"{record.budget_used.tokens_in + record.budget_used.tokens_out} tokens]"
         )
 
+    # ------------------------------------------------------------------
+    # Cross-pollination helpers
+    # ------------------------------------------------------------------
+
     async def _run_cross_pollination(
         self, solutions, record
     ) -> tuple[list[CrossCritique], dict[str, int]]:
@@ -312,13 +422,11 @@ class RunController:
         total_usage = {"tokens_in": 0, "tokens_out": 0, "llm_calls": 0}
         critiques = []
 
-        # Each inventor critiques the next (circular)
         tasks = []
         for i, sol in enumerate(solutions):
             target_idx = (i + 1) % len(solutions)
             target = solutions[target_idx]
 
-            # Summarize own solution
             own_summary = sol.content[:2000] if sol.content else "No solution"
             target_content = target.content[:5000] if target.content else "No solution"
 
@@ -339,6 +447,7 @@ class RunController:
 
         for result in results:
             if isinstance(result, Exception):
+                logger.warning(f"Cross-critique failed: {result}")
                 continue
             critique, usage = result
             critiques.append(critique)
@@ -368,6 +477,10 @@ class RunController:
 
         return critique, usage
 
+    # ------------------------------------------------------------------
+    # Budget management
+    # ------------------------------------------------------------------
+
     def _build_inventor_configs(self, request: ZeusRequest, record: RunRecord) -> list[InventorConfig]:
         """Build inventor configurations based on problem classification."""
         num_inventors = request.num_inventors
@@ -375,7 +488,6 @@ class RunController:
 
         configs = []
 
-        # Standard inventor lineup (A through E)
         inventor_defs = [
             ("A", "foundational"),
             ("B", "competitive"),
@@ -388,7 +500,6 @@ class RunController:
             type_info = InventorPrompts.INVENTOR_TYPES.get(inv_type, {})
             libraries = list(type_info.get("libraries", []))
 
-            # Domain-specific inventor gets libraries based on classification
             if inv_type == "domain_specific" and classification:
                 libraries = list(classification.recommended_library_emphasis)
                 if not libraries:

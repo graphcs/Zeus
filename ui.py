@@ -47,8 +47,8 @@ footer {visibility: hidden !important;}
 /* Sidebar */
 section[data-testid="stSidebar"] {
     background-color: #13142b;
-    width: 230px !important;
-    min-width: 230px !important;
+    width: 330px !important;
+    min-width: 330px !important;
 }
 section[data-testid="stSidebar"] > div:first-child {padding-top: 0;}
 section[data-testid="stSidebar"] hr {border-color: #2a2b45 !important; margin: 8px 0 !important;}
@@ -297,6 +297,7 @@ _defaults = {
     "constraints_text": "",
     "objectives_text": "",
     "_reset_requested": False,
+    "model": OpenRouterClient.DEFAULT_MODEL,
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -436,6 +437,30 @@ def _generate_example():
     finally:
         loop.close()
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_openrouter_models_meta() -> tuple[list[dict], str | None]:
+    """Fetch text-capable OpenRouter models with metadata, cached for 30 min.
+
+    Returns:
+        (model_meta_list, error_message). Each item has keys:
+        ``id``, ``name``, ``context_length``, ``description``.
+        On success error_message is None.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(
+            OpenRouterClient.fetch_text_models_with_meta(timeout=15.0)
+        )
+        return models, None
+    except Exception as e:
+        return [], str(e)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
 # ============================================================================
 # Background Thread State (module-level for cross-thread communication)
 # ============================================================================
@@ -482,6 +507,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
     })
 
     handler = None
+    loop = None
 
     def _log(msg, level="INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -505,7 +531,8 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
 
         _log(f"Pipeline starting — {settings['num_inventors']} inventors, "
              f"budget {settings['max_llm_calls']} calls, "
-               f"max {settings['max_revisions']} revisions")
+             f"max {settings['max_revisions']} revisions, "
+             f"model {settings.get('model', 'default')}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -521,6 +548,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
             on_progress=on_progress,
             max_llm_calls=settings["max_llm_calls"],
             max_revisions=settings["max_revisions"],
+            model=settings["model"],
         ))
         loop.close()
         _thread_state["response"] = response
@@ -568,8 +596,17 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
         _log(f"ERROR: {e}", "ERROR")
         _log(tb, "ERROR")
     finally:
-        if handler:
-            logging.getLogger("src").removeHandler(handler)
+        # Guarantee the UI is unblocked even on SystemExit / KeyboardInterrupt
+        try:
+            if loop is not None:
+                loop.close()
+        except Exception:
+            pass
+        try:
+            if handler:
+                logging.getLogger("src").removeHandler(handler)
+        except Exception:
+            pass
         _thread_state["active"] = False
         _thread_state["done"] = True
 
@@ -867,14 +904,14 @@ with st.sidebar:
         "Fast": {
             "num_inventors": 2,
             "cross_pollinate": False,
-            "max_llm_calls": 12,
+            "max_llm_calls": 18,
             "max_revisions": 1,
             "desc": "~5-10 min — 2 inventors, 1 refinement pass",
         },
         "Normal": {
             "num_inventors": 4,
             "cross_pollinate": False,
-            "max_llm_calls": 30,
+            "max_llm_calls": 32,
             "max_revisions": 3,
             "desc": "~10-20 min — 4 inventors, up to 3 refinements",
         },
@@ -889,7 +926,7 @@ with st.sidebar:
 
     # Settings
     with st.expander("\u2699\ufe0f Settings", expanded=True):
-        all_modes = list(PRESETS.keys()) #+ ["Custom"]
+        all_modes = list(PRESETS.keys()) + ["Custom"]
         current_idx = all_modes.index(st.session_state.preset) if st.session_state.preset in all_modes else 2
 
         def _apply_preset():
@@ -913,20 +950,115 @@ with st.sidebar:
 
         if chosen in PRESETS:
             st.caption(PRESETS[chosen]["desc"])
-        # else:
-        #     # Custom mode — show all controls
-        #     st.session_state.num_inventors = st.slider(
-        #         "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
-        #     )
-        #     st.session_state.max_revisions = st.slider(
-        #         "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
-        #     )
-        #     st.session_state.cross_pollinate = st.toggle(
-        #         "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
-        #     )
-        #     st.session_state.max_llm_calls = st.number_input(
-        #         "Max LLM Calls", value=st.session_state.max_llm_calls, min_value=1, key="_llm"
-        #     )
+        else: # Custom mode
+            st.session_state.num_inventors = st.slider(
+                "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
+            )
+            st.session_state.max_revisions = st.slider(
+                "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
+            )
+            st.session_state.cross_pollinate = st.toggle(
+                "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
+            )
+            st.session_state.max_llm_calls = int(st.number_input(
+                "Max LLM Calls",
+                value=int(st.session_state.max_llm_calls),
+                min_value=1,
+                max_value=200,
+                step=1,
+                key="_llm",
+                help="Hard cap on total LLM API calls for this run.",
+            ))
+
+            # Estimation Logic
+            ni = st.session_state.num_inventors
+            rev = st.session_state.max_revisions
+            cp = 1 if st.session_state.cross_pollinate else 0
+            
+            # --- Calculation Breakdown ---
+            # 1. Pipeline overhead: Intake, Synthesis, Assembly = 3
+            # 2. Inventor generation: ni
+            # 3. Cross-pollination: ni (if enabled)
+            # 4. Library critique: 6 parallel critics
+            # 5. Iterative Refinement: rev * (1 refinement + 6 re-critiques)
+            
+            core_cost = 3 + ni + (ni if cp else 0)
+            critique_cost = 6
+            refine_cost = rev * 7
+            
+            est_total = core_cost + critique_cost + refine_cost
+            min_viable = core_cost # Just the baseline flow
+            
+            with st.expander("📊 Call Estimation Breakdown", expanded=False):
+                st.write(f"- **Core Pipeline:** {core_cost} calls")
+                st.write(f"- **Library Critique:** {critique_cost} calls")
+                if rev > 0:
+                    st.write(f"- **Refinement ({rev} rounds):** {refine_cost} calls")
+                st.divider()
+                st.write(f"**Total Estimated:** ~{est_total} calls")
+            
+            _max_calls = st.session_state.max_llm_calls
+            if _max_calls < min_viable:
+                st.error(
+                    f"⚠️ Budget ({_max_calls}) is dangerously low. The pipeline needs at least "
+                    f"{min_viable} calls for this configuration just to reach assembly."
+                )
+            elif _max_calls < est_total:
+                st.warning(
+                    f"⚠️ Budget ({_max_calls}) is below the full recommendation (~{est_total}). "
+                    "Phase 4 (Critique) or Phase 5 (Refinement) will be limited or skipped."
+                )
+            elif _max_calls > 100:
+                st.info(
+                    "ℹ️ High-depth run detected. Ensure your API key has sufficient "
+                    "quota for 100+ parallel and sequential calls."
+                )
+
+        st.divider()
+        model_refresh_col, _ = st.columns([1.2, 1.8])
+        with model_refresh_col:
+            if st.button("↻ Refresh Models", use_container_width=True, key="refresh_models"):
+                _fetch_openrouter_models_meta.clear()
+                st.rerun()
+
+        available_models_meta, models_error = _fetch_openrouter_models_meta()
+
+        # Build an id→meta lookup for display
+        _meta_by_id: dict[str, dict] = {m["id"]: m for m in available_models_meta}
+
+        # Always start option list with the default model
+        model_options = [OpenRouterClient.DEFAULT_MODEL]
+        model_options.extend(
+            m["id"] for m in available_models_meta
+            if m["id"] != OpenRouterClient.DEFAULT_MODEL
+        )
+
+        current_model = st.session_state.model or OpenRouterClient.DEFAULT_MODEL
+        if current_model not in model_options:
+            model_options.insert(0, current_model)
+
+        selected_model = st.selectbox(
+            "Model",
+            options=model_options,
+            index=model_options.index(current_model),
+            key="_selected_model",
+            help="Select an OpenRouter model. Type to search.",
+        )
+        st.session_state.model = selected_model
+
+        # Show selected model metadata as a helpful caption
+        _sel_meta = _meta_by_id.get(selected_model)
+        if _sel_meta:
+            ctx_k = _sel_meta.get("context_length", 0)
+            ctx_str = f"{ctx_k // 1000}K ctx" if ctx_k else "unknown ctx"
+            _disp_name = _sel_meta.get("name") or selected_model
+            st.caption(f"{_disp_name} · {ctx_str}")
+
+        if models_error:
+            st.caption(
+                "⚠️ Could not fetch model list. Showing default model. "
+                "Check your network or [browse models](https://openrouter.ai/models)."
+            )
 
 
 # ============================================================================
@@ -1139,6 +1271,7 @@ elif not st.session_state.current_response:
                 "num_inventors": st.session_state.num_inventors,
                 "max_llm_calls": st.session_state.max_llm_calls,
                 "max_revisions": st.session_state.max_revisions,
+                "model": st.session_state.model,
                 "output_spec_path": OUTPUT_SPEC_PATH,
                 "eval_criteria_path": EVAL_CRITERIA_PATH,
             }
