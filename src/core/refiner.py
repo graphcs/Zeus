@@ -28,6 +28,8 @@ class Refiner:
         problem_brief: ProblemBrief,
         max_revisions: int = 3,
         budget_remaining: int = 10,
+        generation_model: str | None = None,
+        critique_model: str | None = None,
     ) -> tuple[str, list[RefinementIteration], dict[str, int]]:
         """Iteratively refine the draft.
 
@@ -82,6 +84,7 @@ class Refiner:
                 system=RefinementPrompts.SYSTEM,
                 temperature=0.5,
                 max_tokens=16384,
+                model=generation_model,
             )
 
             total_usage["tokens_in"] += usage.get("tokens_in", 0)
@@ -100,6 +103,7 @@ class Refiner:
                 current_critique, critique_usage = await self.library_critic.critique(
                     current_draft,
                     problem_brief.eval_criteria,
+                    model=critique_model,
                 )
                 total_usage["tokens_in"] += critique_usage.get("tokens_in", 0)
                 total_usage["tokens_out"] += critique_usage.get("tokens_out", 0)

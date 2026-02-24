@@ -67,6 +67,7 @@ class OpenRouterClient:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         json_mode: bool = False,
+        model: str | None = None,
     ) -> tuple[str, dict[str, int]]:
         """Generate a response from the LLM with automatic retry.
 
@@ -89,7 +90,7 @@ class OpenRouterClient:
         messages.append({"role": "user", "content": prompt})
 
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -106,7 +107,7 @@ class OpenRouterClient:
         }
 
         logger.info(
-            f"LLM request → {self.model} | temp={temperature} max_tokens={max_tokens} "
+            f"LLM request → {payload['model']} | temp={temperature} max_tokens={max_tokens} "
             f"json_mode={json_mode} msgs={len(messages)}"
         )
 
@@ -168,6 +169,7 @@ class OpenRouterClient:
         system: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        model: str | None = None,
     ) -> tuple[dict, dict[str, int]]:
         """Generate a JSON response from the LLM.
 
@@ -188,6 +190,7 @@ class OpenRouterClient:
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=True,
+            model=model,
         )
 
         # First attempt: try to parse the response
@@ -211,6 +214,7 @@ class OpenRouterClient:
                 temperature=0.0,  # Deterministic for repair
                 max_tokens=max_tokens,
                 json_mode=True,
+                model=model,
             )
 
             # Combine usage stats

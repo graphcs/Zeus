@@ -77,11 +77,16 @@ class RunController:
         on_progress: Callable[[str], None] | None = None,
         budget_config: BudgetConfig | None = None,
         library_paths: list[str] | None = None,
+        model_overrides: dict[str, str] | None = None,
     ):
         self.llm = llm_client
         self.persistence = persistence or Persistence()
         self.on_progress = on_progress or (lambda msg: None)
         self.budget_config = budget_config or self.DEFAULT_BUDGET
+        self.model_overrides = {
+            k: v for k, v in (model_overrides or {}).items()
+            if isinstance(v, str) and v.strip()
+        }
 
         # Initialize library loader
         self.library_loader = LibraryLoader(user_paths=library_paths)
@@ -116,6 +121,8 @@ class RunController:
             model_version=self.llm.model,
             prompt_versions=self._get_prompt_versions(),
         )
+        if self.model_overrides:
+            record.prompt_versions["phase_models"] = dict(self.model_overrides)
 
         start_time = time.monotonic()
 
@@ -155,7 +162,10 @@ class RunController:
                 logger.info("Attempting best-effort assembly after pipeline error...")
                 try:
                     self.on_progress("Assembling output...")
-                    response, assembly_usage = await self.assembler.assemble(record)
+                    response, assembly_usage = await self.assembler.assemble(
+                        record,
+                        model=self._model_for("phase_6"),
+                    )
                     self._update_budget(record, assembly_usage)
                     record.final_response = response
                 except Exception as e:
@@ -288,7 +298,10 @@ class RunController:
         self.on_progress("Phase 0: Normalizing input...")
         logger.info("Phase 0: Intake — normalizing request into ProblemBrief")
         self._check_budget(record, "intake")
-        record.problem_brief, usage = await self.normalizer.normalize(request)
+        record.problem_brief, usage = await self.normalizer.normalize(
+            request,
+            model=self._model_for("phase_0"),
+        )
         self._update_budget(record, usage)
         logger.info(
             f"Phase 0 complete — classified as '{record.problem_brief.classification.problem_type}', "
@@ -309,7 +322,9 @@ class RunController:
 
         self._check_budget(record, "inventors")
         solutions, inv_usage = await self.inventor.generate_solutions(
-            record.problem_brief, configs
+            record.problem_brief,
+            configs,
+            model=self._model_for("phase_1"),
         )
         record.inventor_solutions = solutions
         self._update_budget_aggregate(record, inv_usage)
@@ -324,7 +339,11 @@ class RunController:
         """Phase 2: Cross-Pollination (optional)."""
         self.on_progress("Phase 2: Cross-pollination...")
         logger.info(f"Phase 2: Cross-pollination with {len(valid_solutions)} solutions")
-        cross_critiques, cp_usage = await self._run_cross_pollination(valid_solutions, record)
+        cross_critiques, cp_usage = await self._run_cross_pollination(
+            valid_solutions,
+            record,
+            model=self._model_for("phase_2"),
+        )
         record.cross_critiques = cross_critiques
         self._update_budget_aggregate(record, cp_usage)
         logger.info(
@@ -341,6 +360,7 @@ class RunController:
             record.problem_brief,
             record.inventor_solutions,
             record.cross_critiques if record.cross_critiques else None,
+            model=self._model_for("phase_3"),
         )
         record.synthesis_result = synthesis_result
         self._update_budget(record, syn_usage)
@@ -364,6 +384,7 @@ class RunController:
         critique_result, crit_usage = await self.library_critic.critique(
             record.synthesis_result.unified_draft,
             record.problem_brief.eval_criteria,
+            model=self._model_for("phase_4"),
         )
         record.library_critique = critique_result
         self._update_budget_aggregate(record, crit_usage)
@@ -388,6 +409,8 @@ class RunController:
             record.problem_brief,
             max_revisions=self.budget_config.max_revisions,
             budget_remaining=remaining,
+            generation_model=self._model_for("phase_5"),
+            critique_model=self._model_for("phase_5"),
         )
         record.final_draft = final_draft
         record.refinement_history = history
@@ -401,7 +424,10 @@ class RunController:
         """Phase 6: Output Assembly."""
         self.on_progress("Phase 6: Assembling deliverables...")
         logger.info("Phase 6: Assembling 5 deliverables + evaluation scorecard")
-        response, asm_usage = await self.assembler.assemble(record)
+        response, asm_usage = await self.assembler.assemble(
+            record,
+            model=self._model_for("phase_6"),
+        )
         self._update_budget(record, asm_usage)
         record.final_response = response
         logger.info(
@@ -416,7 +442,10 @@ class RunController:
     # ------------------------------------------------------------------
 
     async def _run_cross_pollination(
-        self, solutions, record
+        self,
+        solutions,
+        record,
+        model: str | None = None,
     ) -> tuple[list[CrossCritique], dict[str, int]]:
         """Run cross-pollination: each inventor critiques one other."""
         total_usage = {"tokens_in": 0, "tokens_out": 0, "llm_calls": 0}
@@ -440,7 +469,10 @@ class RunController:
             )
 
             tasks.append(self._run_single_cross_critique(
-                prompt, sol.inventor_id, target.inventor_id
+                prompt,
+                sol.inventor_id,
+                target.inventor_id,
+                model=model,
             ))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -458,13 +490,18 @@ class RunController:
         return critiques, total_usage
 
     async def _run_single_cross_critique(
-        self, prompt: str, critic_id: str, target_id: str
+        self,
+        prompt: str,
+        critic_id: str,
+        target_id: str,
+        model: str | None = None,
     ) -> tuple[CrossCritique, dict[str, int]]:
         """Run a single cross-critique."""
         response, usage = await self.llm.generate_json(
             prompt=prompt,
             system=InventorPrompts.SYSTEM,
             temperature=0.5,
+            model=model,
         )
 
         critique = CrossCritique(
@@ -514,6 +551,10 @@ class RunController:
 
         return configs
 
+    def _model_for(self, phase_key: str) -> str:
+        """Resolve the model for a pipeline phase with fallback to default."""
+        return self.model_overrides.get(phase_key, self.llm.model)
+
     def _check_budget(self, record: RunRecord, phase: str) -> None:
         """Check if budget allows another LLM call."""
         if record.budget_used.llm_calls >= self.budget_config.max_llm_calls:
@@ -558,6 +599,7 @@ async def run_zeus(
     num_inventors: int = 4,
     api_key: str | None = None,
     model: str | None = None,
+    phase_models: dict[str, str] | None = None,
     on_progress: Callable[[str], None] | None = None,
     max_llm_calls: int | None = None,
     max_revisions: int | None = None,
@@ -577,6 +619,8 @@ async def run_zeus(
         num_inventors: Number of parallel inventors (default 4).
         api_key: Optional API key (uses env var if not provided).
         model: Optional model override.
+        phase_models: Optional model overrides by phase key
+            (``phase_0``..``phase_6``).
         on_progress: Optional progress callback.
         max_llm_calls: Optional hard cap on LLM calls.
         max_revisions: Optional max refinement iterations.
@@ -621,5 +665,6 @@ async def run_zeus(
             on_progress=on_progress,
             budget_config=budget_config,
             library_paths=library_paths,
+            model_overrides=phase_models,
         )
         return await controller.run(request)

@@ -16,7 +16,11 @@ class Normalizer:
     def __init__(self, llm_client: OpenRouterClient):
         self.llm = llm_client
 
-    async def normalize(self, request: ZeusRequest) -> tuple[ProblemBrief, dict[str, int]]:
+    async def normalize(
+        self,
+        request: ZeusRequest,
+        model: str | None = None,
+    ) -> tuple[ProblemBrief, dict[str, int]]:
         """Normalize a request into a ProblemBrief.
 
         Args:
@@ -54,6 +58,7 @@ class Normalizer:
             prompt=prompt,
             system=IntakePrompts.SYSTEM,
             temperature=0.3,
+            model=model,
         )
         logger.info("Intake LLM response received — parsing ProblemBrief")
 

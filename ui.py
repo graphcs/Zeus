@@ -278,6 +278,20 @@ hr {border-color: #2a2b45 !important;}
 # Session State
 # ============================================================================
 
+PHASE_MODEL_FIELDS = [
+    ("phase_0", "Phase 0 · Intake"),
+    ("phase_1", "Phase 1 · Inventors"),
+    ("phase_2", "Phase 2 · Cross-Pollination"),
+    ("phase_3", "Phase 3 · Synthesis"),
+    ("phase_4", "Phase 4 · Critique"),
+    ("phase_5", "Phase 5 · Refinement"),
+    ("phase_6", "Phase 6 · Assembly"),
+]
+
+_default_phase_models = {
+    key: OpenRouterClient.DEFAULT_MODEL for key, _ in PHASE_MODEL_FIELDS
+}
+
 _defaults = {
     "uploaded_files": [],       # [{name, content, content_bytes, status}]
     "run_active": False,
@@ -298,10 +312,22 @@ _defaults = {
     "objectives_text": "",
     "_reset_requested": False,
     "model": OpenRouterClient.DEFAULT_MODEL,
+    "phase_models": dict(_default_phase_models),
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# Ensure phase model mapping is always complete.
+if "phase_models" not in st.session_state or not isinstance(st.session_state.phase_models, dict):
+    st.session_state.phase_models = dict(_default_phase_models)
+else:
+    _merged_phase_models = dict(_default_phase_models)
+    _merged_phase_models.update({
+        k: v for k, v in st.session_state.phase_models.items()
+        if isinstance(v, str) and v.strip()
+    })
+    st.session_state.phase_models = _merged_phase_models
 
 # Apply deferred reset before widgets with bound keys are instantiated.
 if st.session_state.get("_reset_requested"):
@@ -356,6 +382,18 @@ STEP_DESCRIPTIONS = {
     "Phase 6": "Assembling deliverables and evaluation scorecard.",
     "Saving": "Persisting run record and final artifacts.",
 }
+
+STEP_TO_PHASE_KEY = {
+    "Phase 0": "phase_0",
+    "Phase 1": "phase_1",
+    "Phase 2": "phase_2",
+    "Phase 3": "phase_3",
+    "Phase 4": "phase_4",
+    "Phase 5": "phase_5",
+    "Phase 6": "phase_6",
+}
+
+
 
 DELIVERABLES = [
     ("Executive Summary", "executive_summary"),
@@ -533,6 +571,12 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
              f"budget {settings['max_llm_calls']} calls, "
              f"max {settings['max_revisions']} revisions, "
              f"model {settings.get('model', 'default')}")
+        phase_models = settings.get("phase_models") or {}
+        if phase_models:
+            compact = ", ".join(
+                f"{k}:{v}" for k, v in sorted(phase_models.items())
+            )
+            _log(f"Phase model overrides — {compact}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -549,6 +593,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
             max_llm_calls=settings["max_llm_calls"],
             max_revisions=settings["max_revisions"],
             model=settings["model"],
+            phase_models=settings.get("phase_models"),
         ))
         loop.close()
         _thread_state["response"] = response
@@ -650,6 +695,85 @@ def _get_current_step(msg: str) -> str:
 def _get_step_description(step: str) -> str:
     """Get human-friendly description for the current pipeline step."""
     return STEP_DESCRIPTIONS.get(step, "Zeus is actively processing your request.")
+
+
+def _short_model_name(model_id: str) -> str:
+    """Shorten model id for compact diagram labels."""
+    if not model_id:
+        return "default"
+    if "/" in model_id:
+        model_id = model_id.split("/", 1)[1]
+    return model_id if len(model_id) <= 28 else f"{model_id[:25]}..."
+
+
+def _render_pipeline_llm_diagram(current_step: str) -> None:
+    """Render live pipeline diagram with LLM call points + selected models."""
+    phase_models = st.session_state.get("phase_models", {}) or {}
+    fallback_model = st.session_state.get("model", OpenRouterClient.DEFAULT_MODEL)
+
+    if current_step in PIPELINE_STEPS:
+        active_idx = PIPELINE_STEPS.index(current_step)
+    else:
+        active_idx = -1
+
+    node_ids = {
+        "Phase 0": "p0",
+        "Phase 1": "p1",
+        "Phase 2": "p2",
+        "Phase 3": "p3",
+        "Phase 4": "p4",
+        "Phase 5": "p5",
+        "Phase 6": "p6",
+        "Saving": "save",
+    }
+
+    def _node_style(step: str) -> tuple[str, str]:
+        if step in PIPELINE_STEPS:
+            idx = PIPELINE_STEPS.index(step)
+            if idx == active_idx:
+                return "#112a1f", "#4ade80"
+            if idx < active_idx:
+                return "#19243d", "#4A7BF7"
+        return "#1e1f38", "#3a3b55"
+
+    lines = [
+        "digraph ZeusLLMFlow {",
+        '  rankdir=LR;',
+        '  graph [bgcolor="transparent", pad="0.2", nodesep="0.35", ranksep="0.5"];',
+        '  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, color="#3a3b55", fontcolor="#E8E8ED"];',
+        '  edge [color="#4a4d6a", penwidth=1.2, arrowsize=0.8];',
+    ]
+
+    for step in PIPELINE_STEPS:
+        node_id = node_ids[step]
+        fill, border = _node_style(step)
+
+        if step in STEP_TO_PHASE_KEY:
+            phase_key = STEP_TO_PHASE_KEY[step]
+            model = phase_models.get(phase_key, fallback_model)
+            model_label = _short_model_name(model)
+            label = f"{step}\\nmodel: {model_label}"
+        else:
+            label = f"{step}"
+
+        lines.append(
+            f'  {node_id} [label="{label}", fillcolor="{fill}", color="{border}"];'
+        )
+
+    lines.extend([
+        "  p0 -> p1 -> p2 -> p3 -> p4 -> p5 -> p6 -> save;",
+        "}",
+    ])
+
+    st.caption("Pipeline LLM Call Map")
+    st.graphviz_chart("\n".join(lines), use_container_width=True)
+
+    if current_step in STEP_TO_PHASE_KEY:
+        phase_key = STEP_TO_PHASE_KEY[current_step]
+        active_model = phase_models.get(phase_key, fallback_model)
+        st.caption(f"Active model: {active_model}")
+    elif current_step == "Saving":
+        st.caption("Active step has no LLM call.")
 
 
 def _render_scrollable_logs(logs: list[tuple[str, str, str]]) -> None:
@@ -835,6 +959,8 @@ def show_progress():
 </div>''',
         unsafe_allow_html=True,
     )
+
+    _render_pipeline_llm_diagram(current_step)
 
     # Live log
     logs = _thread_state.get("logs", [])
@@ -1038,13 +1164,36 @@ with st.sidebar:
             model_options.insert(0, current_model)
 
         selected_model = st.selectbox(
-            "Model",
+            "Global Model",
             options=model_options,
             index=model_options.index(current_model),
             key="_selected_model",
-            help="Select an OpenRouter model. Type to search.",
+            help="Default model used when a phase-specific override is not set.",
         )
         st.session_state.model = selected_model
+
+        apply_global_col, _ = st.columns([1.3, 1.7])
+        with apply_global_col:
+            if st.button("Use Global for All Steps", key="apply_global_all", use_container_width=True):
+                st.session_state.phase_models = {
+                    key: selected_model for key, _ in PHASE_MODEL_FIELDS
+                }
+                st.rerun()
+
+        with st.expander("Step Models", expanded=False):
+            phase_models = dict(st.session_state.phase_models)
+            for phase_key, phase_label in PHASE_MODEL_FIELDS:
+                phase_current = phase_models.get(phase_key, selected_model)
+                if phase_current not in model_options:
+                    model_options.insert(0, phase_current)
+                picked = st.selectbox(
+                    phase_label,
+                    options=model_options,
+                    index=model_options.index(phase_current),
+                    key=f"_model_{phase_key}",
+                )
+                phase_models[phase_key] = picked
+            st.session_state.phase_models = phase_models
 
         # Show selected model metadata as a helpful caption
         _sel_meta = _meta_by_id.get(selected_model)
@@ -1272,6 +1421,7 @@ elif not st.session_state.current_response:
                 "max_llm_calls": st.session_state.max_llm_calls,
                 "max_revisions": st.session_state.max_revisions,
                 "model": st.session_state.model,
+                "phase_models": dict(st.session_state.phase_models),
                 "output_spec_path": OUTPUT_SPEC_PATH,
                 "eval_criteria_path": EVAL_CRITERIA_PATH,
             }

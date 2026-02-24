@@ -23,6 +23,7 @@ class LibraryCritic:
         self,
         draft: str,
         eval_criteria: str = "",
+        model: str | None = None,
     ) -> tuple[LibraryCritiqueResult, dict[str, int]]:
         """Run all library critics in parallel.
 
@@ -44,7 +45,13 @@ class LibraryCritic:
         critic_names = []
         for lib_name, lib_content in available_libs.items():
             if lib_content and lib_name in LibraryCritiquePrompts.CRITIQUE_TEMPLATES:
-                tasks.append(self._run_single_critic(draft, lib_name, lib_content, eval_criteria))
+                tasks.append(self._run_single_critic(
+                    draft,
+                    lib_name,
+                    lib_content,
+                    eval_criteria,
+                    model=model,
+                ))
                 critic_names.append(lib_name)
 
         logger.info(f"Launching {len(tasks)} library critics in parallel: {critic_names}")
@@ -92,6 +99,7 @@ class LibraryCritic:
         library_name: str,
         library_content: str,
         eval_criteria: str,
+        model: str | None = None,
     ) -> tuple[LibraryCritiqueFinding, dict[str, int]]:
         """Run a single library critic."""
         logger.info(f"Critic '{library_name}': preparing prompt ({len(library_content)} chars library)...")
@@ -115,6 +123,7 @@ class LibraryCritic:
             prompt=prompt,
             system=LibraryCritiquePrompts.SYSTEM,
             temperature=0.5,
+            model=model,
         )
 
         # Parse issues
