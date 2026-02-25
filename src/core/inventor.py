@@ -23,6 +23,7 @@ class Inventor:
         problem_brief: ProblemBrief,
         configs: list[InventorConfig],
         model: str | None = None,
+        model_overrides: dict[str, str] | None = None,
     ) -> tuple[list[InventorSolution], dict[str, int]]:
         """Run all inventors in parallel.
 
@@ -37,10 +38,12 @@ class Inventor:
         for cfg in configs:
             logger.info(f"  Inventor {cfg.inventor_id} ({cfg.inventor_type}) — libs: {cfg.library_assignments}")
 
-        tasks = [
-            self._run_single_inventor(problem_brief, config, model=model)
-            for config in configs
-        ]
+        tasks = []
+        for config in configs:
+            chosen_model = (model_overrides or {}).get(config.inventor_id, model)
+            tasks.append(
+                self._run_single_inventor(problem_brief, config, model=chosen_model)
+            )
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 

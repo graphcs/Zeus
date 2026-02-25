@@ -290,8 +290,24 @@ PHASE_MODEL_FIELDS = [
     ("phase_6", "Phase 6 · Assembly"),
 ]
 
+MAX_INVENTORS = 10
+
+
+def _inventor_id(index: int) -> str:
+    """Map 0-based index to A, B, C... style inventor IDs."""
+    return chr(ord("A") + index)
+
+INVENTOR_MODEL_FIELDS = [
+    (_inventor_id(i), f"Inventor {_inventor_id(i)}")
+    for i in range(MAX_INVENTORS)
+]
+
 _default_phase_models = {
     key: OpenRouterClient.DEFAULT_MODEL for key, _ in PHASE_MODEL_FIELDS
+}
+
+_default_inventor_models = {
+    inv_id: OpenRouterClient.DEFAULT_MODEL for inv_id, _ in INVENTOR_MODEL_FIELDS
 }
 
 _defaults = {
@@ -315,6 +331,7 @@ _defaults = {
     "_reset_requested": False,
     "model": OpenRouterClient.DEFAULT_MODEL,
     "phase_models": dict(_default_phase_models),
+    "inventor_models": dict(_default_inventor_models),
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -330,6 +347,17 @@ else:
         if isinstance(v, str) and v.strip()
     })
     st.session_state.phase_models = _merged_phase_models
+
+# Ensure inventor model mapping is always complete.
+if "inventor_models" not in st.session_state or not isinstance(st.session_state.inventor_models, dict):
+    st.session_state.inventor_models = dict(_default_inventor_models)
+else:
+    _merged_inventor_models = dict(_default_inventor_models)
+    _merged_inventor_models.update({
+        k: v for k, v in st.session_state.inventor_models.items()
+        if isinstance(v, str) and v.strip()
+    })
+    st.session_state.inventor_models = _merged_inventor_models
 
 # Apply deferred reset before widgets with bound keys are instantiated.
 if st.session_state.get("_reset_requested"):
@@ -571,8 +599,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
 
         _log(f"Pipeline starting — {settings['num_inventors']} inventors, "
              f"budget {settings['max_llm_calls']} calls, "
-             f"max {settings['max_revisions']} revisions, "
-             f"model {settings.get('model', 'default')}")
+             f"max {settings['max_revisions']} revisions, ")
         phase_models = settings.get("phase_models") or {}
         if phase_models:
             compact = ", ".join(
@@ -711,7 +738,11 @@ def _short_model_name(model_id: str) -> str:
 def _render_pipeline_llm_diagram(current_step: str) -> None:
     """Render live pipeline diagram with LLM call points + selected models."""
     phase_models = st.session_state.get("phase_models", {}) or {}
+    inventor_models = st.session_state.get("inventor_models", {}) or {}
     fallback_model = st.session_state.get("model", OpenRouterClient.DEFAULT_MODEL)
+    phase_1_model = phase_models.get("phase_1", fallback_model)
+    num_inventors = int(st.session_state.get("num_inventors", 1) or 1)
+    active_inventors = [inv_id for inv_id, _ in INVENTOR_MODEL_FIELDS[:num_inventors]]
 
     if current_step in PIPELINE_STEPS:
         active_idx = PIPELINE_STEPS.index(current_step)
@@ -762,15 +793,38 @@ def _render_pipeline_llm_diagram(current_step: str) -> None:
             f'  {node_id} [label="{label}", fillcolor="{fill}", color="{border}"];'
         )
 
-    lines.extend([
-        "  p0 -> p1 -> p2 -> p3 -> p4 -> p5 -> p6 -> save;",
-        "}",
-    ])
+    inventor_fill, inventor_border = _node_style("Phase 1")
+    for inv_id in active_inventors:
+        node_id = f"inv_{inv_id}"
+        inv_model = inventor_models.get(inv_id, phase_1_model)
+        model_label = _short_model_name(inv_model)
+        lines.append(
+            f'  {node_id} [label="Inv {inv_id}\\nmodel: {model_label}", '
+            f'fillcolor="{inventor_fill}", color="{inventor_border}"];'
+        )
+
+    if active_inventors:
+        lines.append("  p0 -> p1;")
+        lines.append("  { rank=same; " + "; ".join(f"inv_{inv_id}" for inv_id in active_inventors) + "; }")
+        for inv_id in active_inventors:
+            lines.append(f"  p1 -> inv_{inv_id};")
+            lines.append(f"  inv_{inv_id} -> p2;")
+        lines.append("  p2 -> p3 -> p4 -> p5 -> p6 -> save;")
+    else:
+        lines.append("  p0 -> p1 -> p2 -> p3 -> p4 -> p5 -> p6 -> save;")
+
+    lines.append("}")
 
     st.caption("Pipeline LLM Call Map")
     st.graphviz_chart("\n".join(lines), use_container_width=True)
 
-    if current_step in STEP_TO_PHASE_KEY:
+    if current_step == "Phase 1" and active_inventors:
+        inventor_summary = ", ".join(
+            f"{inv_id}:{inventor_models.get(inv_id, phase_1_model)}"
+            for inv_id in active_inventors
+        )
+        st.caption(f"Active inventor models: {inventor_summary}")
+    elif current_step in STEP_TO_PHASE_KEY:
         phase_key = STEP_TO_PHASE_KEY[current_step]
         active_model = phase_models.get(phase_key, fallback_model)
         st.caption(f"Active model: {active_model}")
@@ -842,7 +896,10 @@ def view_document_dialog(title, content):
     """Dialog for viewing a document's full content."""
     st.markdown(f"**Viewing: {title}**")
     st.divider()
-    st. markdown(content)
+    if title == "Solution Design Document":
+        _render_markdown_with_mermaid(content)
+    else:
+        st.markdown(content)
 
 
 @st.dialog("Run Outputs", width="large")
@@ -1115,7 +1172,7 @@ with st.sidebar:
             st.caption(PRESETS[chosen]["desc"])
         else: # Custom mode
             st.session_state.num_inventors = st.slider(
-                "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
+                "Inventors", 1, MAX_INVENTORS, st.session_state.num_inventors, key="_inv"
             )
             st.session_state.max_revisions = st.slider(
                 "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
@@ -1215,11 +1272,16 @@ with st.sidebar:
                 st.session_state.phase_models = {
                     key: selected_model for key, _ in PHASE_MODEL_FIELDS
                 }
+                st.session_state.inventor_models = {
+                    inv_id: selected_model for inv_id, _ in INVENTOR_MODEL_FIELDS
+                }
                 st.rerun()
 
         with st.expander("Step Models", expanded=False):
             phase_models = dict(st.session_state.phase_models)
             for phase_key, phase_label in PHASE_MODEL_FIELDS:
+                if phase_key == "phase_1" and int(st.session_state.num_inventors) > 1:
+                    continue
                 phase_current = phase_models.get(phase_key, selected_model)
                 if phase_current not in model_options:
                     model_options.insert(0, phase_current)
@@ -1231,6 +1293,36 @@ with st.sidebar:
                 )
                 phase_models[phase_key] = picked
             st.session_state.phase_models = phase_models
+
+            if int(st.session_state.num_inventors) > 1:
+                st.caption("Phase 1 model is controlled via Inventor Models when multiple inventors are active.")
+
+        if int(st.session_state.num_inventors) > 1:
+            with st.expander("Inventor Models (Phase 1)", expanded=False):
+                inventor_models = dict(st.session_state.inventor_models)
+                phase_1_model = st.session_state.phase_models.get("phase_1", selected_model)
+                active_inventor_fields = INVENTOR_MODEL_FIELDS[: int(st.session_state.num_inventors)]
+
+                if st.button("Use Phase 1 Model for All Inventors", key="apply_phase1_inventors"):
+                    for inv_id, _ in INVENTOR_MODEL_FIELDS:
+                        inventor_models[inv_id] = phase_1_model
+                    st.session_state.inventor_models = inventor_models
+                    st.rerun()
+
+                st.caption(f"Showing {len(active_inventor_fields)} active inventors.")
+
+                for inv_id, inv_label in active_inventor_fields:
+                    inv_current = inventor_models.get(inv_id, phase_1_model)
+                    if inv_current not in model_options:
+                        model_options.insert(0, inv_current)
+                    picked_inv = st.selectbox(
+                        inv_label,
+                        options=model_options,
+                        index=model_options.index(inv_current),
+                        key=f"_model_inv_{inv_id}",
+                    )
+                    inventor_models[inv_id] = picked_inv
+                st.session_state.inventor_models = inventor_models
 
         # Show selected model metadata as a helpful caption
         _sel_meta = _meta_by_id.get(selected_model)
@@ -1462,6 +1554,17 @@ elif not st.session_state.current_response:
                 "output_spec_path": OUTPUT_SPEC_PATH,
                 "eval_criteria_path": EVAL_CRITERIA_PATH,
             }
+
+            if int(st.session_state.num_inventors) > 1:
+                inventor_phase_overrides = {
+                    f"phase_1_inventor_{inv_id}": st.session_state.inventor_models.get(
+                        inv_id,
+                        st.session_state.phase_models.get("phase_1", st.session_state.model),
+                    )
+                    for inv_id, _ in INVENTOR_MODEL_FIELDS[: int(st.session_state.num_inventors)]
+                }
+                settings["phase_models"].update(inventor_phase_overrides)
+
             thread = threading.Thread(
                 target=_run_pipeline_thread,
                 args=(prompt, constraints, objectives, context, settings),

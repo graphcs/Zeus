@@ -315,16 +315,29 @@ class RunController:
         self.on_progress("Phase 1: Running parallel inventors...")
         configs = self._build_inventor_configs(request, record)
         record.inventor_configs = configs
+        default_phase_1_model = self._model_for("phase_1")
+        inventor_models = {
+            cfg.inventor_id: self._model_for(f"phase_1_inventor_{cfg.inventor_id}")
+            for cfg in configs
+        }
         logger.info(
             f"Phase 1: Launching {len(configs)} parallel inventors: "
             f"{', '.join(f'{c.inventor_id}({c.inventor_type})' for c in configs)}"
+        )
+        logger.info(
+            "Phase 1 model routing — "
+            + ", ".join(
+                f"{inv_id}:{model}" for inv_id, model in inventor_models.items()
+            )
+            + f" (default={default_phase_1_model})"
         )
 
         self._check_budget(record, "inventors")
         solutions, inv_usage = await self.inventor.generate_solutions(
             record.problem_brief,
             configs,
-            model=self._model_for("phase_1"),
+            model=default_phase_1_model,
+            model_overrides=inventor_models,
         )
         record.inventor_solutions = solutions
         self._update_budget_aggregate(record, inv_usage)
@@ -525,15 +538,20 @@ class RunController:
 
         configs = []
 
-        inventor_defs = [
-            ("A", "foundational"),
-            ("B", "competitive"),
-            ("C", "comprehensive"),
-            ("D", "tabula_rasa"),
-            ("E", "domain_specific"),
+        base_inventor_types = [
+            "foundational",
+            "competitive",
+            "comprehensive",
+            "tabula_rasa",
+            "domain_specific",
         ]
 
-        for i, (inv_id, inv_type) in enumerate(inventor_defs[:num_inventors]):
+        for i in range(num_inventors):
+            inv_id = chr(ord("A") + i)
+            if i < len(base_inventor_types):
+                inv_type = base_inventor_types[i]
+            else:
+                inv_type = "domain_specific"
             type_info = InventorPrompts.INVENTOR_TYPES.get(inv_type, {})
             libraries = list(type_info.get("libraries", []))
 
@@ -620,7 +638,8 @@ async def run_zeus(
         api_key: Optional API key (uses env var if not provided).
         model: Optional model override.
         phase_models: Optional model overrides by phase key
-            (``phase_0``..``phase_6``).
+            (``phase_0``..``phase_6``) and optional inventor keys
+            (``phase_1_inventor_A``..``phase_1_inventor_E``).
         on_progress: Optional progress callback.
         max_llm_calls: Optional hard cap on LLM calls.
         max_revisions: Optional max refinement iterations.
