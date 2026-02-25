@@ -7,12 +7,14 @@ import threading
 import time
 import io
 import zipfile
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
 from src.utils.read_file import read_file_content
 from src.llm.openrouter import OpenRouterClient
+from streamlit_mermaid import st_mermaid
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -785,9 +787,39 @@ def _render_scrollable_logs(logs: list[tuple[str, str, str]]) -> None:
         st.code(log_text, language="log", wrap_lines=True)
 
 
+def _render_markdown_with_mermaid(content: str) -> None:
+    """Render markdown content, handling mermaid code blocks separately."""
+    # Split content by mermaid code blocks.
+    # Pattern looks for ```mermaid ... ```
+    # Using re.split with capturing group keeps the delimiter content (the mermaid code).
+    parts = re.split(r'```mermaid\s+(.*?)\s+```', content, flags=re.DOTALL)
+
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            # Even parts are normal markdown
+            st.markdown(part)
+        else:
+            # Odd parts are mermaid code
+            try:
+                st_mermaid(part.strip(), height="500px", key=f"mermaid_doc_{i}")
+            except Exception as e:
+                st.error(f"Error rendering mermaid diagram: {e}")
+                st.code(part, language="mermaid")
+
+
 # ============================================================================
 # Dialogs
 # ============================================================================
+
+@st.dialog("Documentation", width="large")
+def show_documentation_dialog():
+    """Dialog for viewing project documentation with rendered diagrams."""
+    doc_path = Path("docs/Zeus_Architecture_and_Workflow.md")
+    if doc_path.exists():
+        content = doc_path.read_text(encoding="utf-8")
+        _render_markdown_with_mermaid(content)
+    else:
+        st.error(f"Documentation file not found: {doc_path}")
 
 @st.dialog("Add note")
 def add_note_dialog(run_id):
@@ -810,7 +842,7 @@ def view_document_dialog(title, content):
     """Dialog for viewing a document's full content."""
     st.markdown(f"**Viewing: {title}**")
     st.divider()
-    st.markdown(content)
+    st. markdown(content)
 
 
 @st.dialog("Run Outputs", width="large")
@@ -1015,6 +1047,11 @@ with st.sidebar:
         <span class="icon">\U0001f319</span> Morpheus
     </div>
     """, unsafe_allow_html=True)
+
+    st.divider()
+
+    if st.button("\U0001f4da Documentation", use_container_width=True, help="View System Architecture"):
+        show_documentation_dialog()
 
     st.divider()
 
