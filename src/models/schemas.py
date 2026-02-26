@@ -262,10 +262,6 @@ class BudgetConfig(BaseModel):
         default_factory=lambda: _env_float("ZEUS_PER_CALL_TIMEOUT", 120.0),
         description="Timeout per LLM call in seconds"
     )
-    total_run_timeout: float = Field(
-        default_factory=lambda: _env_float("ZEUS_TOTAL_RUN_TIMEOUT", 900.0),
-        description="Total run timeout in seconds (15 min default)"
-    )
 
 
 class BudgetUsed(BaseModel):

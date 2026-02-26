@@ -24,6 +24,7 @@ class Synthesizer:
         problem_brief: ProblemBrief,
         solutions: list[InventorSolution],
         cross_critiques: list[CrossCritique] | None = None,
+        model: str | None = None,
     ) -> tuple[SynthesisResult, dict[str, int]]:
         """Synthesize multiple inventor solutions into a unified draft.
 
@@ -78,6 +79,7 @@ class Synthesizer:
             system=SynthesisPrompts.SYSTEM,
             temperature=0.5,
             max_tokens=16384,
+            model=model,
         )
         logger.info(f"Synthesis LLM response received")
 
