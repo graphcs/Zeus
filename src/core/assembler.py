@@ -28,7 +28,11 @@ class Assembler:
         self.llm = llm_client
         self.evaluator = Evaluator()
 
-    async def assemble(self, record: RunRecord) -> tuple[ZeusResponse, dict[str, int]]:
+    async def assemble(
+        self,
+        record: RunRecord,
+        model: str | None = None,
+    ) -> tuple[ZeusResponse, dict[str, int]]:
         """Assemble final response from a run record.
 
         Args:
@@ -83,6 +87,7 @@ class Assembler:
             system=AssemblyPrompts.SYSTEM,
             temperature=0.3,
             max_tokens=16384,
+            model=model,
         )
         logger.info("Assembly LLM response received — parsing deliverables")
 

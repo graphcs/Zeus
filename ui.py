@@ -7,12 +7,14 @@ import threading
 import time
 import io
 import zipfile
+import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from src.core.run_controller import run_zeus
 from src.core.persistence import Persistence
 from src.utils.read_file import read_file_content
 from src.llm.openrouter import OpenRouterClient
+from streamlit_mermaid import st_mermaid
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,8 +49,8 @@ footer {visibility: hidden !important;}
 /* Sidebar */
 section[data-testid="stSidebar"] {
     background-color: #13142b;
-    width: 230px !important;
-    min-width: 230px !important;
+    width: 330px !important;
+    min-width: 330px !important;
 }
 section[data-testid="stSidebar"] > div:first-child {padding-top: 0;}
 section[data-testid="stSidebar"] hr {border-color: #2a2b45 !important; margin: 8px 0 !important;}
@@ -278,6 +280,36 @@ hr {border-color: #2a2b45 !important;}
 # Session State
 # ============================================================================
 
+PHASE_MODEL_FIELDS = [
+    ("phase_0", "Phase 0 · Intake"),
+    ("phase_1", "Phase 1 · Inventors"),
+    ("phase_2", "Phase 2 · Cross-Pollination"),
+    ("phase_3", "Phase 3 · Synthesis"),
+    ("phase_4", "Phase 4 · Critique"),
+    ("phase_5", "Phase 5 · Refinement"),
+    ("phase_6", "Phase 6 · Assembly"),
+]
+
+MAX_INVENTORS = 10
+
+
+def _inventor_id(index: int) -> str:
+    """Map 0-based index to A, B, C... style inventor IDs."""
+    return chr(ord("A") + index)
+
+INVENTOR_MODEL_FIELDS = [
+    (_inventor_id(i), f"Inventor {_inventor_id(i)}")
+    for i in range(MAX_INVENTORS)
+]
+
+_default_phase_models = {
+    key: OpenRouterClient.DEFAULT_MODEL for key, _ in PHASE_MODEL_FIELDS
+}
+
+_default_inventor_models = {
+    inv_id: OpenRouterClient.DEFAULT_MODEL for inv_id, _ in INVENTOR_MODEL_FIELDS
+}
+
 _defaults = {
     "uploaded_files": [],       # [{name, content, content_bytes, status}]
     "run_active": False,
@@ -292,16 +324,40 @@ _defaults = {
     "cross_pollinate": False,
     "max_llm_calls": 30,
     "max_revisions": 3,
-    "total_timeout": 2000,
     "preset": "Normal",
     "prompt_text": "",
     "constraints_text": "",
     "objectives_text": "",
     "_reset_requested": False,
+    "model": OpenRouterClient.DEFAULT_MODEL,
+    "phase_models": dict(_default_phase_models),
+    "inventor_models": dict(_default_inventor_models),
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+# Ensure phase model mapping is always complete.
+if "phase_models" not in st.session_state or not isinstance(st.session_state.phase_models, dict):
+    st.session_state.phase_models = dict(_default_phase_models)
+else:
+    _merged_phase_models = dict(_default_phase_models)
+    _merged_phase_models.update({
+        k: v for k, v in st.session_state.phase_models.items()
+        if isinstance(v, str) and v.strip()
+    })
+    st.session_state.phase_models = _merged_phase_models
+
+# Ensure inventor model mapping is always complete.
+if "inventor_models" not in st.session_state or not isinstance(st.session_state.inventor_models, dict):
+    st.session_state.inventor_models = dict(_default_inventor_models)
+else:
+    _merged_inventor_models = dict(_default_inventor_models)
+    _merged_inventor_models.update({
+        k: v for k, v in st.session_state.inventor_models.items()
+        if isinstance(v, str) and v.strip()
+    })
+    st.session_state.inventor_models = _merged_inventor_models
 
 # Apply deferred reset before widgets with bound keys are instantiated.
 if st.session_state.get("_reset_requested"):
@@ -356,6 +412,18 @@ STEP_DESCRIPTIONS = {
     "Phase 6": "Assembling deliverables and evaluation scorecard.",
     "Saving": "Persisting run record and final artifacts.",
 }
+
+STEP_TO_PHASE_KEY = {
+    "Phase 0": "phase_0",
+    "Phase 1": "phase_1",
+    "Phase 2": "phase_2",
+    "Phase 3": "phase_3",
+    "Phase 4": "phase_4",
+    "Phase 5": "phase_5",
+    "Phase 6": "phase_6",
+}
+
+
 
 DELIVERABLES = [
     ("Executive Summary", "executive_summary"),
@@ -437,6 +505,30 @@ def _generate_example():
     finally:
         loop.close()
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_openrouter_models_meta() -> tuple[list[dict], str | None]:
+    """Fetch text-capable OpenRouter models with metadata, cached for 30 min.
+
+    Returns:
+        (model_meta_list, error_message). Each item has keys:
+        ``id``, ``name``, ``context_length``, ``description``.
+        On success error_message is None.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        models = loop.run_until_complete(
+            OpenRouterClient.fetch_text_models_with_meta(timeout=15.0)
+        )
+        return models, None
+    except Exception as e:
+        return [], str(e)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
 # ============================================================================
 # Background Thread State (module-level for cross-thread communication)
 # ============================================================================
@@ -483,6 +575,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
     })
 
     handler = None
+    loop = None
 
     def _log(msg, level="INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -506,8 +599,13 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
 
         _log(f"Pipeline starting — {settings['num_inventors']} inventors, "
              f"budget {settings['max_llm_calls']} calls, "
-             f"max {settings['max_revisions']} revisions, "
-             f"timeout {settings['total_timeout']}s")
+             f"max {settings['max_revisions']} revisions, ")
+        phase_models = settings.get("phase_models") or {}
+        if phase_models:
+            compact = ", ".join(
+                f"{k}:{v}" for k, v in sorted(phase_models.items())
+            )
+            _log(f"Phase model overrides — {compact}")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -523,7 +621,8 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
             on_progress=on_progress,
             max_llm_calls=settings["max_llm_calls"],
             max_revisions=settings["max_revisions"],
-            total_run_timeout=settings["total_timeout"],
+            model=settings["model"],
+            phase_models=settings.get("phase_models"),
         ))
         loop.close()
         _thread_state["response"] = response
@@ -536,7 +635,7 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
         # [OPEN] prefixed) AND real pipeline errors (timeout, LLM errors, etc).
         # Only surface real pipeline errors — critique findings are expected output.
         _error_prefixes = (
-            "Run timeout:", "LLM error:", "Budget exceeded:",
+            "LLM error:", "Budget exceeded:",
             "Assembly failed:", "Unexpected error:", "All inventors failed",
             "Synthesis produced empty", "Generation failed",
         )
@@ -571,8 +670,17 @@ def _run_pipeline_thread(prompt, constraints, objectives, context, settings):
         _log(f"ERROR: {e}", "ERROR")
         _log(tb, "ERROR")
     finally:
-        if handler:
-            logging.getLogger("src").removeHandler(handler)
+        # Guarantee the UI is unblocked even on SystemExit / KeyboardInterrupt
+        try:
+            if loop is not None:
+                loop.close()
+        except Exception:
+            pass
+        try:
+            if handler:
+                logging.getLogger("src").removeHandler(handler)
+        except Exception:
+            pass
         _thread_state["active"] = False
         _thread_state["done"] = True
 
@@ -618,6 +726,112 @@ def _get_step_description(step: str) -> str:
     return STEP_DESCRIPTIONS.get(step, "Zeus is actively processing your request.")
 
 
+def _short_model_name(model_id: str) -> str:
+    """Shorten model id for compact diagram labels."""
+    if not model_id:
+        return "default"
+    if "/" in model_id:
+        model_id = model_id.split("/", 1)[1]
+    return model_id if len(model_id) <= 28 else f"{model_id[:25]}..."
+
+
+def _render_pipeline_llm_diagram(current_step: str) -> None:
+    """Render live pipeline diagram with LLM call points + selected models."""
+    phase_models = st.session_state.get("phase_models", {}) or {}
+    inventor_models = st.session_state.get("inventor_models", {}) or {}
+    fallback_model = st.session_state.get("model", OpenRouterClient.DEFAULT_MODEL)
+    phase_1_model = phase_models.get("phase_1", fallback_model)
+    num_inventors = int(st.session_state.get("num_inventors", 1) or 1)
+    active_inventors = [inv_id for inv_id, _ in INVENTOR_MODEL_FIELDS[:num_inventors]]
+
+    if current_step in PIPELINE_STEPS:
+        active_idx = PIPELINE_STEPS.index(current_step)
+    else:
+        active_idx = -1
+
+    node_ids = {
+        "Phase 0": "p0",
+        "Phase 1": "p1",
+        "Phase 2": "p2",
+        "Phase 3": "p3",
+        "Phase 4": "p4",
+        "Phase 5": "p5",
+        "Phase 6": "p6",
+        "Saving": "save",
+    }
+
+    def _node_style(step: str) -> tuple[str, str]:
+        if step in PIPELINE_STEPS:
+            idx = PIPELINE_STEPS.index(step)
+            if idx == active_idx:
+                return "#112a1f", "#4ade80"
+            if idx < active_idx:
+                return "#19243d", "#4A7BF7"
+        return "#1e1f38", "#3a3b55"
+
+    lines = [
+        "digraph ZeusLLMFlow {",
+        '  rankdir=LR;',
+        '  graph [bgcolor="transparent", pad="0.2", nodesep="0.35", ranksep="0.5"];',
+        '  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, color="#3a3b55", fontcolor="#E8E8ED"];',
+        '  edge [color="#4a4d6a", penwidth=1.2, arrowsize=0.8];',
+    ]
+
+    for step in PIPELINE_STEPS:
+        node_id = node_ids[step]
+        fill, border = _node_style(step)
+
+        if step in STEP_TO_PHASE_KEY:
+            phase_key = STEP_TO_PHASE_KEY[step]
+            model = phase_models.get(phase_key, fallback_model)
+            model_label = _short_model_name(model)
+            label = f"{step}\\nmodel: {model_label}"
+        else:
+            label = f"{step}"
+
+        lines.append(
+            f'  {node_id} [label="{label}", fillcolor="{fill}", color="{border}"];'
+        )
+
+    inventor_fill, inventor_border = _node_style("Phase 1")
+    for inv_id in active_inventors:
+        node_id = f"inv_{inv_id}"
+        inv_model = inventor_models.get(inv_id, phase_1_model)
+        model_label = _short_model_name(inv_model)
+        lines.append(
+            f'  {node_id} [label="Inv {inv_id}\\nmodel: {model_label}", '
+            f'fillcolor="{inventor_fill}", color="{inventor_border}"];'
+        )
+
+    if active_inventors:
+        lines.append("  p0 -> p1;")
+        lines.append("  { rank=same; " + "; ".join(f"inv_{inv_id}" for inv_id in active_inventors) + "; }")
+        for inv_id in active_inventors:
+            lines.append(f"  p1 -> inv_{inv_id};")
+            lines.append(f"  inv_{inv_id} -> p2;")
+        lines.append("  p2 -> p3 -> p4 -> p5 -> p6 -> save;")
+    else:
+        lines.append("  p0 -> p1 -> p2 -> p3 -> p4 -> p5 -> p6 -> save;")
+
+    lines.append("}")
+
+    st.caption("Pipeline LLM Call Map")
+    st.graphviz_chart("\n".join(lines), use_container_width=True)
+
+    if current_step == "Phase 1" and active_inventors:
+        inventor_summary = ", ".join(
+            f"{inv_id}:{inventor_models.get(inv_id, phase_1_model)}"
+            for inv_id in active_inventors
+        )
+        st.caption(f"Active inventor models: {inventor_summary}")
+    elif current_step in STEP_TO_PHASE_KEY:
+        phase_key = STEP_TO_PHASE_KEY[current_step]
+        active_model = phase_models.get(phase_key, fallback_model)
+        st.caption(f"Active model: {active_model}")
+    elif current_step == "Saving":
+        st.caption("Active step has no LLM call.")
+
+
 def _render_scrollable_logs(logs: list[tuple[str, str, str]]) -> None:
     """Render logs in a fixed-height, scrollable panel."""
     if not logs:
@@ -627,9 +841,39 @@ def _render_scrollable_logs(logs: list[tuple[str, str, str]]) -> None:
         st.code(log_text, language="log", wrap_lines=True)
 
 
+def _render_markdown_with_mermaid(content: str) -> None:
+    """Render markdown content, handling mermaid code blocks separately."""
+    # Split content by mermaid code blocks.
+    # Pattern looks for ```mermaid ... ```
+    # Using re.split with capturing group keeps the delimiter content (the mermaid code).
+    parts = re.split(r'```mermaid\s+(.*?)\s+```', content, flags=re.DOTALL)
+
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            # Even parts are normal markdown
+            st.markdown(part)
+        else:
+            # Odd parts are mermaid code
+            try:
+                st_mermaid(part.strip(), height="500px", key=f"mermaid_doc_{i}")
+            except Exception as e:
+                st.error(f"Error rendering mermaid diagram: {e}")
+                st.code(part, language="mermaid")
+
+
 # ============================================================================
 # Dialogs
 # ============================================================================
+
+@st.dialog("Documentation", width="large")
+def show_documentation_dialog():
+    """Dialog for viewing project documentation with rendered diagrams."""
+    doc_path = Path("docs/Zeus_Architecture_and_Workflow.md")
+    if doc_path.exists():
+        content = doc_path.read_text(encoding="utf-8")
+        _render_markdown_with_mermaid(content)
+    else:
+        st.error(f"Documentation file not found: {doc_path}")
 
 @st.dialog("Add note")
 def add_note_dialog(run_id):
@@ -652,7 +896,10 @@ def view_document_dialog(title, content):
     """Dialog for viewing a document's full content."""
     st.markdown(f"**Viewing: {title}**")
     st.divider()
-    st.markdown(content)
+    if title == "Solution Design Document":
+        _render_markdown_with_mermaid(content)
+    else:
+        st.markdown(content)
 
 
 @st.dialog("Run Outputs", width="large")
@@ -802,6 +1049,8 @@ def show_progress():
         unsafe_allow_html=True,
     )
 
+    _render_pipeline_llm_diagram(current_step)
+
     # Live log
     logs = _thread_state.get("logs", [])
     _render_scrollable_logs(logs)
@@ -858,6 +1107,11 @@ with st.sidebar:
 
     st.divider()
 
+    if st.button("\U0001f4da Documentation", use_container_width=True, help="View System Architecture"):
+        show_documentation_dialog()
+
+    st.divider()
+
     # Speed presets
     PRESETS = {
         "Turbo": {
@@ -865,23 +1119,20 @@ with st.sidebar:
             "cross_pollinate": False,
             "max_llm_calls": 5,
             "max_revisions": 0,
-            "total_timeout": 600,
             "desc": "~3-5 min — 1 inventor, no refinement, skip critique",
         },
         "Fast": {
             "num_inventors": 2,
             "cross_pollinate": False,
-            "max_llm_calls": 12,
+            "max_llm_calls": 18,
             "max_revisions": 1,
-            "total_timeout": 1100,
             "desc": "~5-10 min — 2 inventors, 1 refinement pass",
         },
         "Normal": {
             "num_inventors": 4,
             "cross_pollinate": False,
-            "max_llm_calls": 30,
+            "max_llm_calls": 32,
             "max_revisions": 3,
-            "total_timeout": 2000,
             "desc": "~10-20 min — 4 inventors, up to 3 refinements",
         },
         "Thorough": {
@@ -889,14 +1140,13 @@ with st.sidebar:
             "cross_pollinate": True,
             "max_llm_calls": 50,
             "max_revisions": 3,
-            "total_timeout": 3600,
             "desc": "~15-25 min — 5 inventors, cross-pollination, full critique",
         },
     }
 
     # Settings
     with st.expander("\u2699\ufe0f Settings", expanded=True):
-        all_modes = list(PRESETS.keys()) #+ ["Custom"]
+        all_modes = list(PRESETS.keys()) + ["Custom"]
         current_idx = all_modes.index(st.session_state.preset) if st.session_state.preset in all_modes else 2
 
         def _apply_preset():
@@ -908,7 +1158,6 @@ with st.sidebar:
                 st.session_state.cross_pollinate = p["cross_pollinate"]
                 st.session_state.max_llm_calls = p["max_llm_calls"]
                 st.session_state.max_revisions = p["max_revisions"]
-                st.session_state.total_timeout = p["total_timeout"]
 
         chosen = st.radio(
             "Run Mode",
@@ -921,23 +1170,173 @@ with st.sidebar:
 
         if chosen in PRESETS:
             st.caption(PRESETS[chosen]["desc"])
-        # else:
-        #     # Custom mode — show all controls
-        #     st.session_state.num_inventors = st.slider(
-        #         "Inventors", 1, 10, st.session_state.num_inventors, key="_inv"
-        #     )
-        #     st.session_state.max_revisions = st.slider(
-        #         "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
-        #     )
-        #     st.session_state.cross_pollinate = st.toggle(
-        #         "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
-        #     )
-        #     st.session_state.max_llm_calls = st.number_input(
-        #         "Max LLM Calls", value=st.session_state.max_llm_calls, min_value=1, key="_llm"
-        #     )
-        #     st.session_state.total_timeout = st.number_input(
-        #         "Timeout (s)", value=st.session_state.total_timeout, min_value=60, key="_to"
-        #     )
+        else: # Custom mode
+            st.session_state.num_inventors = st.slider(
+                "Inventors", 1, MAX_INVENTORS, st.session_state.num_inventors, key="_inv"
+            )
+            st.session_state.max_revisions = st.slider(
+                "Max Refinement Rounds", 0, 5, st.session_state.max_revisions, key="_rev"
+            )
+            st.session_state.cross_pollinate = st.toggle(
+                "Cross-Pollination", st.session_state.cross_pollinate, key="_cp"
+            )
+            st.session_state.max_llm_calls = int(st.number_input(
+                "Max LLM Calls",
+                value=int(st.session_state.max_llm_calls),
+                min_value=1,
+                max_value=200,
+                step=1,
+                key="_llm",
+                help="Hard cap on total LLM API calls for this run.",
+            ))
+
+            # Estimation Logic
+            ni = st.session_state.num_inventors
+            rev = st.session_state.max_revisions
+            cp = 1 if st.session_state.cross_pollinate else 0
+            
+            # --- Calculation Breakdown ---
+            # 1. Pipeline overhead: Intake, Synthesis, Assembly = 3
+            # 2. Inventor generation: ni
+            # 3. Cross-pollination: ni (if enabled)
+            # 4. Library critique: 6 parallel critics
+            # 5. Iterative Refinement: rev * (1 refinement + 6 re-critiques)
+            
+            core_cost = 3 + ni + (ni if cp else 0)
+            critique_cost = 6
+            refine_cost = rev * 7
+            
+            est_total = core_cost + critique_cost + refine_cost
+            min_viable = core_cost # Just the baseline flow
+            
+            with st.expander("📊 Call Estimation Breakdown", expanded=False):
+                st.write(f"- **Core Pipeline:** {core_cost} calls")
+                st.write(f"- **Library Critique:** {critique_cost} calls")
+                if rev > 0:
+                    st.write(f"- **Refinement ({rev} rounds):** {refine_cost} calls")
+                st.divider()
+                st.write(f"**Total Estimated:** ~{est_total} calls")
+            
+            _max_calls = st.session_state.max_llm_calls
+            if _max_calls < min_viable:
+                st.error(
+                    f"⚠️ Budget ({_max_calls}) is dangerously low. The pipeline needs at least "
+                    f"{min_viable} calls for this configuration just to reach assembly."
+                )
+            elif _max_calls < est_total:
+                st.warning(
+                    f"⚠️ Budget ({_max_calls}) is below the full recommendation (~{est_total}). "
+                    "Phase 4 (Critique) or Phase 5 (Refinement) will be limited or skipped."
+                )
+            elif _max_calls > 100:
+                st.info(
+                    "ℹ️ High-depth run detected. Ensure your API key has sufficient "
+                    "quota for 100+ parallel and sequential calls."
+                )
+
+        st.divider()
+        model_refresh_col, _ = st.columns([1.2, 1.8])
+        with model_refresh_col:
+            if st.button("↻ Refresh Models", use_container_width=True, key="refresh_models"):
+                _fetch_openrouter_models_meta.clear()
+                st.rerun()
+
+        available_models_meta, models_error = _fetch_openrouter_models_meta()
+
+        # Build an id→meta lookup for display
+        _meta_by_id: dict[str, dict] = {m["id"]: m for m in available_models_meta}
+
+        # Always start option list with the default model
+        model_options = [OpenRouterClient.DEFAULT_MODEL]
+        model_options.extend(
+            m["id"] for m in available_models_meta
+            if m["id"] != OpenRouterClient.DEFAULT_MODEL
+        )
+
+        current_model = st.session_state.model or OpenRouterClient.DEFAULT_MODEL
+        if current_model not in model_options:
+            model_options.insert(0, current_model)
+
+        selected_model = st.selectbox(
+            "Global Model",
+            options=model_options,
+            index=model_options.index(current_model),
+            key="_selected_model",
+            help="Default model used when a phase-specific override is not set.",
+        )
+        st.session_state.model = selected_model
+
+        apply_global_col, _ = st.columns([1.3, 1.7])
+        with apply_global_col:
+            if st.button("Use Global for All Steps", key="apply_global_all", use_container_width=True):
+                st.session_state.phase_models = {
+                    key: selected_model for key, _ in PHASE_MODEL_FIELDS
+                }
+                st.session_state.inventor_models = {
+                    inv_id: selected_model for inv_id, _ in INVENTOR_MODEL_FIELDS
+                }
+                st.rerun()
+
+        with st.expander("Step Models", expanded=False):
+            phase_models = dict(st.session_state.phase_models)
+            for phase_key, phase_label in PHASE_MODEL_FIELDS:
+                if phase_key == "phase_1" and int(st.session_state.num_inventors) > 1:
+                    continue
+                phase_current = phase_models.get(phase_key, selected_model)
+                if phase_current not in model_options:
+                    model_options.insert(0, phase_current)
+                picked = st.selectbox(
+                    phase_label,
+                    options=model_options,
+                    index=model_options.index(phase_current),
+                    key=f"_model_{phase_key}",
+                )
+                phase_models[phase_key] = picked
+            st.session_state.phase_models = phase_models
+
+            if int(st.session_state.num_inventors) > 1:
+                st.caption("Phase 1 model is controlled via Inventor Models when multiple inventors are active.")
+
+        if int(st.session_state.num_inventors) > 1:
+            with st.expander("Inventor Models (Phase 1)", expanded=False):
+                inventor_models = dict(st.session_state.inventor_models)
+                phase_1_model = st.session_state.phase_models.get("phase_1", selected_model)
+                active_inventor_fields = INVENTOR_MODEL_FIELDS[: int(st.session_state.num_inventors)]
+
+                if st.button("Use Phase 1 Model for All Inventors", key="apply_phase1_inventors"):
+                    for inv_id, _ in INVENTOR_MODEL_FIELDS:
+                        inventor_models[inv_id] = phase_1_model
+                    st.session_state.inventor_models = inventor_models
+                    st.rerun()
+
+                st.caption(f"Showing {len(active_inventor_fields)} active inventors.")
+
+                for inv_id, inv_label in active_inventor_fields:
+                    inv_current = inventor_models.get(inv_id, phase_1_model)
+                    if inv_current not in model_options:
+                        model_options.insert(0, inv_current)
+                    picked_inv = st.selectbox(
+                        inv_label,
+                        options=model_options,
+                        index=model_options.index(inv_current),
+                        key=f"_model_inv_{inv_id}",
+                    )
+                    inventor_models[inv_id] = picked_inv
+                st.session_state.inventor_models = inventor_models
+
+        # Show selected model metadata as a helpful caption
+        _sel_meta = _meta_by_id.get(selected_model)
+        if _sel_meta:
+            ctx_k = _sel_meta.get("context_length", 0)
+            ctx_str = f"{ctx_k // 1000}K ctx" if ctx_k else "unknown ctx"
+            _disp_name = _sel_meta.get("name") or selected_model
+            st.caption(f"{_disp_name} · {ctx_str}")
+
+        if models_error:
+            st.caption(
+                "⚠️ Could not fetch model list. Showing default model. "
+                "Check your network or [browse models](https://openrouter.ai/models)."
+            )
 
 
 # ============================================================================
@@ -1150,10 +1549,22 @@ elif not st.session_state.current_response:
                 "num_inventors": st.session_state.num_inventors,
                 "max_llm_calls": st.session_state.max_llm_calls,
                 "max_revisions": st.session_state.max_revisions,
-                "total_timeout": st.session_state.total_timeout,
+                "model": st.session_state.model,
+                "phase_models": dict(st.session_state.phase_models),
                 "output_spec_path": OUTPUT_SPEC_PATH,
                 "eval_criteria_path": EVAL_CRITERIA_PATH,
             }
+
+            if int(st.session_state.num_inventors) > 1:
+                inventor_phase_overrides = {
+                    f"phase_1_inventor_{inv_id}": st.session_state.inventor_models.get(
+                        inv_id,
+                        st.session_state.phase_models.get("phase_1", st.session_state.model),
+                    )
+                    for inv_id, _ in INVENTOR_MODEL_FIELDS[: int(st.session_state.num_inventors)]
+                }
+                settings["phase_models"].update(inventor_phase_overrides)
+
             thread = threading.Thread(
                 target=_run_pipeline_thread,
                 args=(prompt, constraints, objectives, context, settings),
